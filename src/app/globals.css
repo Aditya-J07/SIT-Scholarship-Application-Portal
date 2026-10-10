@@ -1,26 +1,128 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --primary-navy: #AC3D47;
+  --primary-navy-dark: #8D323A;
+  --sit-maroon: rgb(172, 61, 71);
+  --sit-maroon-dark: rgb(141, 50, 58);
+  --sit-maroon-light: #FDF5F6;
+  --header-gray: #EEF1F6;
+  --border-gray: #D1D5DB;
+  --text-dark: #111827;
+  --text-muted: #4B5563;
+  --bg-page: #FFFFFF;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--bg-page);
+  color: var(--text-dark);
+  font-family: Arial, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Force light mode across system */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-page: #FFFFFF;
+    --text-dark: #111827;
+  }
+}
+
+/* Government institutional form controls */
+.gov-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0.5rem 1.25rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  border-radius: 0px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+  text-decoration: none;
+}
+
+.gov-btn-primary {
+  background-color: #AC3D47;
+  color: #FFFFFF;
+  border-color: #AC3D47;
+}
+
+.gov-btn-primary:hover {
+  background-color: #8D323A;
+  border-color: #8D323A;
+}
+
+.gov-btn-secondary {
+  background-color: #EEF1F6;
+  color: #AC3D47;
+  border-color: #CBD5E1;
+}
+
+.gov-btn-secondary:hover {
+  background-color: #E2E8F0;
+}
+
+.gov-btn-outline {
+  background-color: #FFFFFF;
+  color: #AC3D47;
+  border-color: #AC3D47;
+}
+
+.gov-btn-outline:hover {
+  background-color: #FDF5F6;
+}
+
+.gov-btn-danger {
+  background-color: #DC2626;
+  color: #FFFFFF;
+  border-color: #DC2626;
+}
+
+.gov-btn-danger:hover {
+  background-color: #B91C1C;
+}
+
+.gov-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0.5rem 0.75rem;
+  font-size: 1rem;
+  color: #111827;
+  background-color: #FFFFFF;
+  border: 1px solid #9CA3AF;
+  border-radius: 0px;
+  outline: none;
+}
+
+.gov-input:focus {
+  border-color: #AC3D47;
+  box-shadow: 0 0 0 1px #AC3D47;
+}
+
+.gov-input[disabled], .gov-input:disabled {
+  background-color: #F3F4F6;
+  color: #6B7280;
+  cursor: not-allowed;
+}
+
+.gov-header-bar {
+  background-color: #EEF1F6;
+  border: 1px solid #D1D5DB;
+  border-left: 4px solid #AC3D47;
+  padding: 0.625rem 1rem;
+  font-weight: 700;
+  color: #AC3D47;
+}
+
+.gov-card {
+  border: 1px solid #D1D5DB;
+  background: #FFFFFF;
+  border-radius: 0px;
 }

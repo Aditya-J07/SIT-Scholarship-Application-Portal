@@ -1,0 +1,138 @@
+import { NextResponse } from 'next/server';
+import { getCurrentSession } from '@/lib/auth/session';
+import { db } from '@/lib/db';
+import { ApplicationRecord } from '@/lib/types';
+import { calculateMeritScore } from '@/lib/merit';
+import { evaluateEligibility } from '@/lib/eligibility';
+
+export async function GET() {
+  const session = await getCurrentSession();
+  if (!session) {
+    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
+  }
+
+  if (session.role === 'student') {
+    const apps = db.listApplicationsForStudent(session.userId);
+    const scholarships = db.listScholarships();
+    const enriched = apps.map((app) => {
+      const sch = scholarships.find((s) => s.code === app.data.scholarship_code);
+      return {
+        ...app,
+        scholarship_name: sch?.name || app.data.scholarship_code,
+      };
+    });
+    return NextResponse.json({ applications: enriched });
+  }
+
+  // Admins & Reviewers see all
+  const apps = db.listApplications();
+  return NextResponse.json({ applications: apps });
+}
+
+export async function POST(request: Request) {
+  const session = await getCurrentSession();
+  if (!session) {
+    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
+  }
+
+  try {
+    const body = await request.json();
+    const { scholarship_code } = body;
+
+    if (!scholarship_code) {
+      return NextResponse.json({ error: { message: 'Scholarship code is required' } }, { status: 400 });
+    }
+
+    const scholarship = db.findScholarshipByCode(scholarship_code);
+    if (!scholarship) {
+      return NextResponse.json({ error: { message: 'Scholarship not found' } }, { status: 404 });
+    }
+
+    if (!scholarship.active) {
+      return NextResponse.json(
+        { error: { message: 'This scholarship is currently inactive. Applications are not being accepted.' } },
+        { status: 400 }
+      );
+    }
+
+    const cycle = db.findActiveCycleForScholarship(scholarship.id);
+    if (!cycle) {
+      return NextResponse.json(
+        { error: { message: 'The application window for this scholarship cycle is currently closed.' } },
+        { status: 400 }
+      );
+    }
+
+    // Check if student already has an application in this cycle
+    const existing = db.findApplicationForStudentInCycle(session.userId, cycle.id);
+    if (existing) {
+      // If draft or needs_correction, resume it
+      if (existing.status === 'draft' || existing.status === 'needs_correction') {
+        return NextResponse.json({ success: true, application: existing, resumed: true });
+      }
+      return NextResponse.json(
+        { error: { message: `You have already submitted an application (${existing.ref_no}) for this scholarship cycle.` } },
+        { status: 409 }
+      );
+    }
+
+    // Prefill data from student profile
+    const profile = db.findUserById(session.userId);
+    const currentYear = new Date().getFullYear();
+    const count = db.listApplications().length + 1;
+    const ref_no = `SIT-${scholarship.code.toUpperCase()}-${currentYear}-${count.toString().padStart(6, '0')}`;
+
+    const initialData = {
+      scholarship_code: scholarship.code,
+      full_name: profile?.full_name || '',
+      mobile: profile?.mobile || '',
+      email: profile?.email || '',
+      nationality: 'Indian',
+      course_duration_years: 4,
+      bank_acc_holder_name: profile?.bank_account_holder || profile?.full_name || '',
+      bank_acc_no: profile?.bank_acc_no || '',
+      confirm_bank_acc_no: profile?.bank_acc_no || '',
+      bank_name: profile?.bank_name || '',
+      bank_branch: profile?.bank_branch || '',
+      bank_ifsc: profile?.bank_ifsc || '',
+    };
+
+    const merit_score = calculateMeritScore(initialData);
+    const eligibility_flags = evaluateEligibility(initialData, scholarship.rules, scholarship.code);
+
+    const newApp: ApplicationRecord = {
+      id: `app_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      ref_no,
+      student_id: session.userId,
+      cycle_id: cycle.id,
+      status: 'draft',
+      current_step: 1,
+      hard_copy_received: false,
+      data: initialData,
+      computed: {
+        percentage: 0,
+        merit_score,
+        eligibility_flags,
+      },
+      merit_score,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    db.createApplication(newApp);
+
+    db.logAudit({
+      actor_id: session.userId,
+      actor_email: session.email,
+      action: 'DRAFT_APPLICATION_CREATED',
+      entity: 'applications',
+      entity_id: newApp.id,
+      meta: { ref_no: newApp.ref_no, scholarship: scholarship.code },
+    });
+
+    return NextResponse.json({ success: true, application: newApp, resumed: false });
+  } catch (error: unknown) {
+    console.error('Create application error:', error);
+    return NextResponse.json({ error: { message: 'Failed to create application draft' } }, { status: 500 });
+  }
+}

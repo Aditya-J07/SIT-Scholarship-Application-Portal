@@ -6,15 +6,27 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "npx tsx tests/run-all-tests.ts"
   },
   "dependencies": {
+    "@hookform/resolvers": "^5.9.1",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.3",
+    "@types/qrcode": "^1.5.6",
+    "jszip": "^3.10.2",
+    "lucide-react": "^1.52.0",
     "next": "16.4.0",
+    "pdf-lib": "^1.17.1",
+    "qrcode": "^1.5.4",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "react-hook-form": "^7.89.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
+    "@types/jszip": "^3.4.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
