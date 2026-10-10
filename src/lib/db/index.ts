@@ -12,16 +12,46 @@ import {
 } from '../types';
 import { hashPassword } from '../auth/password';
 
-const DATA_DIR = path.join(process.cwd(), '.data');
+import os from 'os';
+
+function getWritableDataDir(): string {
+  if (process.env.VERCEL) {
+    const tmp = path.join(os.tmpdir(), 'sit_portal_data');
+    try {
+      if (!fs.existsSync(tmp)) fs.mkdirSync(tmp, { recursive: true });
+      return tmp;
+    } catch {
+      return os.tmpdir();
+    }
+  }
+
+  const localDir = path.join(process.cwd(), '.data');
+  try {
+    if (!fs.existsSync(localDir)) {
+      fs.mkdirSync(localDir, { recursive: true });
+    }
+    return localDir;
+  } catch {
+    const tmp = path.join(os.tmpdir(), 'sit_portal_data');
+    try {
+      if (!fs.existsSync(tmp)) fs.mkdirSync(tmp, { recursive: true });
+      return tmp;
+    } catch {
+      return os.tmpdir();
+    }
+  }
+}
+
+const DATA_DIR = getWritableDataDir();
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const STORAGE_DIR = path.join(DATA_DIR, 'storage');
 
-// Ensure storage and data directories exist
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-if (!fs.existsSync(STORAGE_DIR)) {
-  fs.mkdirSync(STORAGE_DIR, { recursive: true });
+try {
+  if (!fs.existsSync(STORAGE_DIR)) {
+    fs.mkdirSync(STORAGE_DIR, { recursive: true });
+  }
+} catch {
+  // Gracefully ignored on read-only environments
 }
 
 function getInitialDatabase(): DatabaseSchema {
@@ -221,18 +251,27 @@ class Database {
         return this.memoryDb!;
       }
     } catch (err) {
-      console.error('Error loading db.json, reinitializing...', err);
+      console.warn('Error reading db.json, using initial database state:', err);
     }
     const initial = getInitialDatabase();
-    this.save(initial);
+    this.memoryDb = initial;
+    try {
+      this.save(initial);
+    } catch {
+      // Ignored if write is not permitted
+    }
     return initial;
   }
 
   private save(data: DatabaseSchema) {
     this.memoryDb = data;
-    const tempFile = `${DB_FILE}.tmp.${Date.now()}`;
-    fs.writeFileSync(tempFile, JSON.stringify(data, null, 2), 'utf-8');
-    fs.renameSync(tempFile, DB_FILE);
+    try {
+      const tempFile = `${DB_FILE}.tmp.${Date.now()}`;
+      fs.writeFileSync(tempFile, JSON.stringify(data, null, 2), 'utf-8');
+      fs.renameSync(tempFile, DB_FILE);
+    } catch (err) {
+      // Gracefully preserve state in memory if filesystem writes fail (e.g. Vercel)
+    }
   }
 
   public getDb(): DatabaseSchema {

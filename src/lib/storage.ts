@@ -16,12 +16,37 @@ const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl!, supabaseKey!)
   : null;
 
-const BUCKET_NAME = 'application-files';
-const LOCAL_STORAGE_DIR = path.join(process.cwd(), '.data', 'storage');
+import os from 'os';
 
-if (!fs.existsSync(LOCAL_STORAGE_DIR)) {
-  fs.mkdirSync(LOCAL_STORAGE_DIR, { recursive: true });
+const BUCKET_NAME = 'application-files';
+
+function getLocalStorageDir(): string {
+  if (process.env.VERCEL) {
+    const tmp = path.join(os.tmpdir(), 'sit_storage');
+    try {
+      if (!fs.existsSync(tmp)) fs.mkdirSync(tmp, { recursive: true });
+      return tmp;
+    } catch {
+      return os.tmpdir();
+    }
+  }
+
+  const local = path.join(process.cwd(), '.data', 'storage');
+  try {
+    if (!fs.existsSync(local)) fs.mkdirSync(local, { recursive: true });
+    return local;
+  } catch {
+    const tmp = path.join(os.tmpdir(), 'sit_storage');
+    try {
+      if (!fs.existsSync(tmp)) fs.mkdirSync(tmp, { recursive: true });
+      return tmp;
+    } catch {
+      return os.tmpdir();
+    }
+  }
 }
+
+const LOCAL_STORAGE_DIR = getLocalStorageDir();
 
 export const storage = {
   isCloud: () => isSupabaseConfigured,
