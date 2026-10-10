@@ -17,6 +17,15 @@ export const metadata: Metadata = {
     'SSKA Scholarship',
     'Engineering Scholarships Karnataka',
   ],
+  icons: {
+    icon: [
+      { url: '/sit-logo.png', type: 'image/png' },
+      { url: '/icon.png', type: 'image/png' },
+      { url: '/favicon.ico' },
+    ],
+    shortcut: '/sit-logo.png',
+    apple: '/sit-logo.png',
+  },
 };
 
 export default function RootLayout({
