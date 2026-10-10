@@ -186,7 +186,12 @@ const en = {
 
   // Footer
   footer_address_title: 'Siddaganga Institute of Technology',
-  footer_address_lines: 'B.H. Road, Tumakuru – 572103, Karnataka, India\nAutonomous Institution under VTU, Belagavi\nApproved by AICTE, New Delhi',
+  footer_address_lines: 'Dr. Sree Sree Sivakumara Swamiji Road, Tumakuru – 572 103, Karnataka, India\n(An Autonomous institute affiliated to Visvesvaraya Technological University, Belagavi, Approved by AICTE, New Delhi, Accredited by NAAC with “A++” Grade)',
+  footer_internal_links_title: 'Internal Links',
+  footer_other_info_title: 'Other Information',
+  footer_anti_ragging_title: 'Anti Ragging Nodal Officer',
+  footer_contact_info_title: 'Contact Info',
+  footer_placement_contact_title: 'For Placement Contact',
   footer_contact_title: 'Scholarship Helpdesk & Accounts Section',
   footer_contact_hours: 'Office Hours: Monday – Saturday (9:30 AM to 5:00 PM)',
   footer_contact_email: 'Email: scholarships@sit.ac.in',
@@ -386,7 +391,12 @@ const kn: Record<keyof typeof en, string> = {
 
   // Footer
   footer_address_title: 'ಸಿದ್ಧಗಂಗಾ ತಾಂತ್ರಿಕ ಮಹಾವಿದ್ಯಾಲಯ',
-  footer_address_lines: 'ಬಿ.ಹೆಚ್. ರಸ್ತೆ, ತುಮಕೂರು – 572103, ಕರ್ನಾಟಕ, ಭಾರತ\nವಿಟಿಯು ಬೆಳಗಾವಿ ಅಡಿಯಲ್ಲಿ ಸ್ವಾಯತ್ತ ಸಂಸ್ಥೆ\nಎಐಸಿಟಿಇ ನವದೆಹಲಿ ಅನುಮೋದಿತ',
+  footer_address_lines: 'ಡಾ. ಶ್ರೀ ಶ್ರೀ ಶಿವಕುಮಾರ ಸ್ವಾಮೀಜಿ ರಸ್ತೆ, ತುಮಕೂರು – 572 103, ಕರ್ನಾಟಕ, ಭಾರತ\n(ವಿಟಿಯು ಬೆಳಗಾವಿ ಅಡಿಯಲ್ಲಿ ಸ್ವಾಯತ್ತ ಸಂಸ್ಥೆ, ಎಐಸಿಟಿಇ ನವದೆಹಲಿ ಅನುಮೋದಿತ, ನ್ಯಾಕ್ "A++" ಶ್ರೇಣಿ ಮಾನ್ಯತೆ ಪಡೆದಿದೆ)',
+  footer_internal_links_title: 'ಆಂತರಿಕ ಕೊಂಡಿಗಳು',
+  footer_other_info_title: 'ಇತರೆ ಮಾಹಿತಿ',
+  footer_anti_ragging_title: 'ರ್ಯಾಗಿಂಗ್ ವಿರೋಧಿ ನೋಡಲ್ ಅಧಿಕಾರಿ',
+  footer_contact_info_title: 'ಸಂಪರ್ಕ ಮಾಹಿತಿ',
+  footer_placement_contact_title: 'ಪ್ಲೇಸ್ಮೆಂಟ್ ಸಂಪರ್ಕ',
   footer_contact_title: 'ವಿದ್ಯಾರ್ಥಿವೇತನ ಸಹಾಯವಾಣಿ ಮತ್ತು ಲೆಕ್ಕಪತ್ರ ವಿಭಾಗ',
   footer_contact_hours: 'ಕಚೇರಿ ಸಮಯ: ಸೋಮವಾರ – ಶನಿವಾರ (ಬೆಳಿಗ್ಗೆ 9:30 ರಿಂದ ಸಂಜೆ 5:00)',
   footer_contact_email: 'ಇಮೇಲ್: scholarships@sit.ac.in',
