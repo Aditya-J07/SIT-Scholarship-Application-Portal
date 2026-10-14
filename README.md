@@ -73,14 +73,24 @@ Follow this step-by-step checklist to configure a new Supabase project for the p
   ```
 
 ### 5. Bootstrap Initial Administrator
-- Run the bootstrap script with your desired admin credentials:
+- Execute the bootstrap script using the interactive hidden prompt:
   ```bash
-  ADMIN_EMAIL="<admin-email>" ADMIN_PASSWORD="<SecurePassword10+Chars>" npx tsx scripts/create-admin.ts
+  npx tsx scripts/create-admin.ts
   ```
-- The bootstrap script enforces the institutional password policy, creates the confirmed admin user in Supabase Auth, and marks `must_change_password = true`.
-- Upon initial login at `/admin-login`, the portal will require an immediate password change at `/change-password`.
+- The script will securely prompt for the administrator email and password (the password prompt mutes terminal output to prevent shoulder-surfing).
+- **Security Rule:** Passwords must **never** be passed on the command line or stored in shell history.
+- The script enforces the institutional password policy (minimum 10 characters, blocklist check, no name/email parts), creates the confirmed admin user in Supabase Auth, and marks `must_change_password = true`.
+- Upon initial login at `/admin-login`, the portal enforces an immediate password change at `/change-password`.
 
 ---
+
+## 3.1 Encryption Key Safety & Operational Procedures
+
+> [!CAUTION]
+> **CRITICAL DATA SAFETY NOTICE:** If `ENCRYPTION_KEY` is lost, corrupted, or deleted, **all bank account numbers encrypted in the database will be permanently unrecoverable**. 
+> The 32-byte base64 encryption key must be securely stored in an institutional password manager (such as 1Password or Bitwarden).
+> 
+> Key rotation is handled without service disruption via `scripts/rotate-encryption-key.ts` using `ENCRYPTION_KEY_PREVIOUS` and `ENCRYPTION_KEY`. See [`RUNBOOK.md`](RUNBOOK.md) for full operational recovery procedures.
 
 ## 4. Environment Variables
 

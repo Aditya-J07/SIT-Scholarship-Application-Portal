@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
-import { getAdminClient } from "@/utils/supabase/admin";
 import { validatePasswordStrength } from "@/lib/auth/password-policy";
 import { db } from "@/lib/db";
 
@@ -49,31 +48,17 @@ export async function POST(request: Request) {
     const { data: authData, error: signUpError } = await supabase.auth.signUp({
       email: normalizedEmail,
       password,
+      options: {
+        data: {
+          full_name: full_name.trim().toUpperCase(),
+          mobile: mobile.trim(),
+        },
+      },
     });
 
-    // To prevent email enumeration: if error occurs (e.g. email exists), return the generic response
     if (signUpError) {
       console.warn("[Register] signUp message:", signUpError.message);
-      return NextResponse.json({
-        success: true,
-        message:
-          "If this email can be registered, a verification message has been sent. Please check your inbox.",
-      });
-    }
-
-    if (authData.user?.id) {
-      // Store student's name and mobile in the profiles table (not in user_metadata).
-      // Public signup creates students only.
-      const admin = getAdminClient();
-      await admin.from("profiles").upsert({
-        id: authData.user.id,
-        role: "student",
-        full_name: full_name.trim().toUpperCase(),
-        mobile: mobile.trim(),
-        email: normalizedEmail,
-        must_change_password: false,
-      });
-
+    } else if (authData.user?.id) {
       const clientIp = request.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
       await db.logAudit({
         actor_id: authData.user.id,
@@ -86,15 +71,11 @@ export async function POST(request: Request) {
       });
     }
 
+    // Always return generic response to prevent email enumeration
     return NextResponse.json({
       success: true,
       message:
         "If this email can be registered, a verification message has been sent. Please check your inbox.",
-      user: {
-        id: authData.user?.id,
-        email: normalizedEmail,
-        role: "student",
-      },
     });
   } catch (error: unknown) {
     console.error("Registration error:", error);

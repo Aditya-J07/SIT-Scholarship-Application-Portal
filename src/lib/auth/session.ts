@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { db } from "../db";
 import { UserRole } from "../types";
@@ -53,4 +54,21 @@ export async function getCurrentSession(): Promise<SessionPayload | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Returns a 403 response if mustChangePassword is true, or null if compliant.
+ * Can be used by API routes to enforce password changes server-side.
+ */
+export function assertPasswordChanged(session: SessionPayload): NextResponse | null {
+  if (session.mustChangePassword) {
+    return NextResponse.json(
+      {
+        code: "PASSWORD_CHANGE_REQUIRED",
+        error: { message: "Password change is required before accessing portal features." },
+      },
+      { status: 403 }
+    );
+  }
+  return null;
 }

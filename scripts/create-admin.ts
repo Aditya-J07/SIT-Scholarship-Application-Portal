@@ -1,21 +1,64 @@
 import crypto from "crypto";
+import readline from "readline";
 import { createClient } from "@supabase/supabase-js";
 import { validatePasswordStrength } from "../src/lib/auth/password-policy";
 
+function promptText(query: string): Promise<string> {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    rl.question(query, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+function promptHidden(query: string): Promise<string> {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    const stdoutWrite = process.stdout.write;
+    process.stdout.write(query);
+    // Mute stdout while user is typing password to prevent terminal shoulder-surfing
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (process.stdout as any).write = (chunk: unknown, encoding?: unknown, cb?: any) => {
+      if (typeof chunk === "string" && (chunk.includes("\n") || chunk.includes("\r"))) {
+        return stdoutWrite.call(process.stdout, chunk as string, encoding as BufferEncoding, cb);
+      }
+      return true;
+    };
+    rl.question("", (password) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (process.stdout as any).write = stdoutWrite;
+      process.stdout.write("\n");
+      rl.close();
+      resolve(password.trim());
+    });
+  });
+}
+
 /**
  * Institutional Admin Bootstrap Script
- * Usage:
- *   ADMIN_EMAIL="<admin-email>" ADMIN_PASSWORD="<secure-passphrase>" npx tsx scripts/create-admin.ts
+ * Security Rules:
+ * - Credentials must NEVER be passed as CLI arguments (prevents shell history leakage).
+ * - Reads from environment variables (ADMIN_EMAIL, ADMIN_PASSWORD) or prompts via hidden stdin.
  */
 async function createAdmin() {
   console.log("========================================================");
   console.log("SIT SCHOLARSHIP PORTAL - ADMINISTRATOR BOOTSTRAP");
   console.log("========================================================\n");
 
-  const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
-  const password = process.env.ADMIN_PASSWORD;
-  const fullName = process.env.ADMIN_NAME?.trim() || "SIT Portal Administrator";
-  const mobile = process.env.ADMIN_MOBILE?.trim() || "9845000000";
+  // Prevent credentials in command line arguments
+  if (process.argv.length > 2) {
+    console.error("SECURITY ERROR: Do not pass credentials as command-line arguments.");
+    console.error("Pass credentials via ADMIN_PASSWORD environment variable or enter via the interactive hidden prompt.");
+    process.exit(1);
+  }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY;
@@ -25,12 +68,24 @@ async function createAdmin() {
     process.exit(1);
   }
 
+  let email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  let password = process.env.ADMIN_PASSWORD;
+
+  if (!email) {
+    email = (await promptText("Enter Admin Email: ")).toLowerCase();
+  }
+
+  if (!password) {
+    password = await promptHidden("Enter Admin Password (hidden): ");
+  }
+
   if (!email || !password) {
-    console.error("ERROR: ADMIN_EMAIL and ADMIN_PASSWORD environment variables are required.");
-    console.log("\nExample execution:");
-    console.log('  ADMIN_EMAIL="<admin-email>" ADMIN_PASSWORD="<secure-passphrase>" npx tsx scripts/create-admin.ts\n');
+    console.error("ERROR: Both administrator email and password are required.");
     process.exit(1);
   }
+
+  const fullName = process.env.ADMIN_NAME?.trim() || "SIT Portal Administrator";
+  const mobile = process.env.ADMIN_MOBILE?.trim() || "9845000000";
 
   // Enforce institutional password policy
   const validation = validatePasswordStrength(password, { email, fullName });

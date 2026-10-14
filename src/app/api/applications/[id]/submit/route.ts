@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { createClient } from '@/utils/supabase/server';
 import { getCurrentSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { fullApplicationSchema } from '@/lib/schemas/application';
@@ -36,6 +37,24 @@ export async function POST(
     );
   }
 
+  // Check verified email confirmation status from Supabase Auth
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user?.email_confirmed_at) {
+    return NextResponse.json(
+      {
+        error: {
+          message:
+            "Your email address must be verified before submitting your application. Please check your inbox for the verification link.",
+        },
+      },
+      { status: 403 }
+    );
+  }
+
   // Check Cycle Window using server time
   const cycle = await db.findCycleById(application.cycle_id);
   if (!cycle) {
@@ -43,7 +62,28 @@ export async function POST(
   }
 
   const now = new Date();
-  if (new Date(cycle.closes_at) < now) {
+  if (cycle.status !== 'open') {
+    return NextResponse.json(
+      { error: { message: 'Applications for this cycle are currently closed.' } },
+      { status: 400 }
+    );
+  }
+
+  if (!cycle.opens_at || !cycle.closes_at) {
+    return NextResponse.json(
+      { error: { message: 'Official cycle dates have not been confirmed by the Accounts Section. Applications cannot be submitted.' } },
+      { status: 400 }
+    );
+  }
+
+  if (now < new Date(cycle.opens_at)) {
+    return NextResponse.json(
+      { error: { message: `The application window has not opened yet (Opens: ${new Date(cycle.opens_at).toLocaleDateString()}).` } },
+      { status: 400 }
+    );
+  }
+
+  if (now > new Date(cycle.closes_at)) {
     return NextResponse.json(
       { error: { message: `The application deadline (${new Date(cycle.closes_at).toLocaleDateString()}) has passed. Submissions are closed.` } },
       { status: 400 }

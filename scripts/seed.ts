@@ -90,23 +90,26 @@ async function seed() {
   }
 
   // 2. Academic Cycle
-  // TODO [COLLEGE DECISION REQUIRED]: Confirm exact opening and closing dates with Accounts Section.
+  // Seeded as 'closed' with NULL dates per institutional security rules.
+  // TODO [COLLEGE DECISION REQUIRED]: Confirm official opening date and deadline with Accounts Section.
+  // Documented closing date from previous circular: 09 Dec 2026 (kept as reference only).
+  // Real dates and status are activated through the Admin -> Cycles interface.
   const cycles = [
     {
       id: "cycle_mnc_2026",
       scholarship_id: "sch_mnc",
       academic_year: "2026-2027",
-      opens_at: "2026-09-01T00:00:00Z", // TODO: confirm official notification date with Accounts Section
-      closes_at: "2026-12-31T23:59:59Z", // TODO: confirm with Accounts Section
-      status: "open",
+      opens_at: null, // TODO: confirm official opening circular date with Accounts Section
+      closes_at: null, // TODO: confirm deadline with Accounts Section (Previous circular reference: 2026-12-09)
+      status: "closed",
     },
     {
       id: "cycle_sska_2026",
       scholarship_id: "sch_sska",
       academic_year: "2026-2027",
-      opens_at: "2026-09-01T00:00:00Z", // TODO: confirm official notification date with Accounts Section
-      closes_at: "2026-12-31T23:59:59Z", // TODO: confirm with Accounts Section
-      status: "open",
+      opens_at: null, // TODO: confirm official opening circular date with Accounts Section
+      closes_at: null, // TODO: confirm deadline with Accounts Section (Previous circular reference: 2026-12-09)
+      status: "closed",
     },
   ];
 
