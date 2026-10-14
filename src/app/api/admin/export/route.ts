@@ -3,6 +3,26 @@ import { getCurrentSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import JSZip from 'jszip';
 import { storage } from '@/lib/storage';
+import { maskBankAccount } from '@/lib/crypto/encryption';
+
+/**
+ * Universal CSV cell sanitizer for formula injection defense (OWASP / H4).
+ * If a cell begins with '=', '+', '-', '@', '\t', or '\r', prefixes with single quote (')
+ * and safely escapes double quotes.
+ */
+function cell(value: unknown): string {
+  if (value === null || value === undefined) return '""';
+  let str = String(value);
+
+  // Check for formula injection triggers
+  if (/^[=+\-@\t\r]/.test(str)) {
+    str = `'${str}`;
+  }
+
+  // Escape inner double quotes
+  const escaped = str.replace(/"/g, '""');
+  return `"${escaped}"`;
+}
 
 export async function GET(request: Request) {
   const session = await getCurrentSession();
@@ -15,7 +35,7 @@ export async function GET(request: Request) {
   const scholarship = searchParams.get('scholarship') || '';
   const status = searchParams.get('status') || '';
 
-  let apps = db.listApplications();
+  let apps = await db.listApplications();
   if (scholarship) {
     apps = apps.filter((a) => a.data.scholarship_code?.toUpperCase() === scholarship.toUpperCase());
   }
@@ -23,8 +43,25 @@ export async function GET(request: Request) {
     apps = apps.filter((a) => a.status === status);
   }
 
+  const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+
+  // Audit every export operation
+  await db.logAudit({
+    actor_id: session.userId,
+    actor_email: session.email,
+    action: `DATA_EXPORT_${format.toUpperCase()}`,
+    entity: 'applications',
+    entity_id: 'bulk_export',
+    meta: {
+      format,
+      scholarship: scholarship || 'all',
+      status: status || 'all',
+      count: apps.length,
+    },
+    ip: clientIp,
+  });
+
   if (format === 'csv') {
-    // Generate CSV
     const headers = [
       'Ref No',
       'Scholarship',
@@ -44,37 +81,37 @@ export async function GET(request: Request) {
       'Family Annual Income',
       'Annual Fee',
       'Scholarship Req Per Month',
-      'Bank Account No',
+      'Masked Bank Account No',
       'Bank Name',
       'IFSC',
       'Submitted At',
       'Decision Remark',
-    ];
+    ].map(cell);
 
     const rows = apps.map((a) => [
-      a.ref_no,
-      a.data.scholarship_code || '',
-      a.status,
-      `"${(a.data.full_name || '').replace(/"/g, '""')}"`,
-      a.data.usn || '',
-      a.data.mobile || '',
-      a.data.email || '',
-      `"${(a.data.course || '').replace(/"/g, '""')}"`,
-      a.data.year_of_study || '',
-      a.data.semester || '',
-      a.data.marks_obtained || '',
-      a.data.marks_gross_total || '',
-      a.computed?.percentage || '',
-      a.data.cgpa || '',
-      a.merit_score || '',
-      a.data.family_annual_income || '',
-      a.data.annual_fee || '',
-      a.data.scholarship_amount_required_per_month || '',
-      `"${a.data.bank_acc_no || ''}"`,
-      `"${(a.data.bank_name || '').replace(/"/g, '""')}"`,
-      a.data.bank_ifsc || '',
-      a.submitted_at ? new Date(a.submitted_at).toLocaleDateString('en-IN') : '',
-      `"${(a.decision_remark || '').replace(/"/g, '""')}"`,
+      cell(a.ref_no),
+      cell(a.data.scholarship_code || ''),
+      cell(a.status),
+      cell(a.data.full_name || ''),
+      cell(a.data.usn || ''),
+      cell(a.data.mobile || ''),
+      cell(a.data.email || ''),
+      cell(a.data.course || ''),
+      cell(a.data.year_of_study || ''),
+      cell(a.data.semester || ''),
+      cell(a.data.marks_obtained || ''),
+      cell(a.data.marks_gross_total || ''),
+      cell(a.computed?.percentage || ''),
+      cell(a.data.cgpa || ''),
+      cell(a.merit_score || ''),
+      cell(a.data.family_annual_income || ''),
+      cell(a.data.annual_fee || ''),
+      cell(a.data.scholarship_amount_required_per_month || ''),
+      cell(a.data.bank_acc_no ? maskBankAccount(a.data.bank_acc_no) : ''),
+      cell(a.data.bank_name || ''),
+      cell(a.data.bank_ifsc || ''),
+      cell(a.submitted_at ? new Date(a.submitted_at).toLocaleDateString('en-IN') : ''),
+      cell(a.decision_remark || ''),
     ]);
 
     const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
@@ -84,6 +121,7 @@ export async function GET(request: Request) {
       headers: {
         'Content-Type': 'text/csv; charset=utf-8',
         'Content-Disposition': `attachment; filename="SIT_Scholarships_Export_${new Date().toISOString().split('T')[0]}.csv"`,
+        'X-Content-Type-Options': 'nosniff',
       },
     });
   }
@@ -107,6 +145,7 @@ export async function GET(request: Request) {
       headers: {
         'Content-Type': 'application/zip',
         'Content-Disposition': `attachment; filename="SIT_Scholarship_PDFs_${new Date().toISOString().split('T')[0]}.zip"`,
+        'X-Content-Type-Options': 'nosniff',
       },
     });
   }

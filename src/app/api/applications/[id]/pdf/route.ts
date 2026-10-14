@@ -14,7 +14,7 @@ export async function GET(
   }
 
   const { id } = await params;
-  const application = db.findApplicationById(id);
+  const application = await db.findApplicationById(id);
   if (!application) {
     return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
   }
@@ -27,7 +27,7 @@ export async function GET(
   const { searchParams } = new URL(request.url);
   const forceDraft = searchParams.get('draft') === 'true';
 
-  const scholarship = db.findScholarshipByCode(application.data.scholarship_code || 'MNC');
+  const scholarship = await db.findScholarshipByCode(application.data.scholarship_code || 'MNC');
   if (!scholarship) {
     return NextResponse.json({ error: { message: 'Scholarship not found' } }, { status: 404 });
   }
@@ -41,6 +41,7 @@ export async function GET(
         headers: {
           'Content-Type': 'application/pdf',
           'Content-Disposition': `inline; filename="${application.ref_no}.pdf"`,
+          'X-Content-Type-Options': 'nosniff',
         },
       });
     }
@@ -56,6 +57,7 @@ export async function GET(
       headers: {
         'Content-Type': 'application/pdf',
         'Content-Disposition': `inline; filename="${application.ref_no}_${isDraft ? 'DRAFT' : 'OFFICIAL'}.pdf"`,
+        'X-Content-Type-Options': 'nosniff',
       },
     });
   } catch (err: unknown) {

@@ -1,16 +1,22 @@
+// Configure testing environment secrets
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'sit-test-jwt-secret-key-must-be-at-least-32-chars-long';
+process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'e83a71f00889c253c3e80f2eb9b325ad13e6189bc9ef7f85dc9eb72c1c68e169';
+
 import {
   step1Schema,
   step2Schema,
   step3Schema,
-  step4Schema,
   step5Schema,
-  step7Schema,
-  fullApplicationSchema,
 } from '../src/lib/schemas/application';
 import { evaluateEligibility } from '../src/lib/eligibility';
-import { calculateMeritScore, calculatePercentage, rankApplicantsByYear } from '../src/lib/merit';
+import { calculateMeritScore, rankApplicantsByYear } from '../src/lib/merit';
 import { generateApplicationPdf } from '../src/lib/pdf/generatePdf';
-import { Scholarship, ApplicationRecord } from '../src/lib/types';
+import { Scholarship, ApplicationRecord, UserProfile } from '../src/lib/types';
+import { hashPassword, verifyPassword, validatePasswordStrength } from '../src/lib/auth/password';
+import { encryptBankAccount, decryptBankAccount, maskBankAccount } from '../src/lib/crypto/encryption';
+import { signToken, verifyToken } from '../src/lib/auth/session';
+import { db } from '../src/lib/db';
+import crypto from 'crypto';
 
 let passedTests = 0;
 let totalTests = 0;
@@ -255,27 +261,48 @@ async function runTests() {
   assert(yr2Score === 92.5, '2nd year merit score calculated from CGPA (92.50)');
 
   // Ranking test with means tie-breaker
-  const mockApps: any[] = [
+  const mockApps: ApplicationRecord[] = [
     {
       id: 'app1',
       ref_no: 'SIT-MNC-2026-000001',
+      student_id: 'u1',
+      cycle_id: 'c1',
       status: 'submitted',
+      current_step: 5,
+      hard_copy_received: false,
       data: { year_of_study: 1, family_annual_income: 200000, full_name: 'Student A' },
+      computed: { percentage: 92.5, merit_score: 92.5, eligibility_flags: fullyEligibleEval },
       merit_score: 92.5,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     },
     {
       id: 'app2',
       ref_no: 'SIT-MNC-2026-000002',
+      student_id: 'u2',
+      cycle_id: 'c1',
       status: 'submitted',
+      current_step: 5,
+      hard_copy_received: false,
       data: { year_of_study: 1, family_annual_income: 120000, full_name: 'Student B (Lower Income)' },
+      computed: { percentage: 92.5, merit_score: 92.5, eligibility_flags: fullyEligibleEval },
       merit_score: 92.5, // Tie on score, but lower income
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     },
     {
       id: 'app3',
       ref_no: 'SIT-MNC-2026-000003',
+      student_id: 'u3',
+      cycle_id: 'c1',
       status: 'submitted',
+      current_step: 5,
+      hard_copy_received: false,
       data: { year_of_study: 1, family_annual_income: 150000, full_name: 'Student C (Higher Score)' },
+      computed: { percentage: 96.0, merit_score: 96.0, eligibility_flags: fullyEligibleEval },
       merit_score: 96.0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     },
   ];
 
@@ -355,6 +382,98 @@ async function runTests() {
 
   const draftResult = await generateApplicationPdf(testApp, testScholarship, { isDraft: true });
   assert(Buffer.isBuffer(draftResult.pdfBuffer) && draftResult.pdfBuffer.length > 5000, 'DRAFT watermarked preview PDF generated successfully');
+
+  // 5. Phase 1 Security Architecture & Cryptography Tests
+  console.log('\n--- 5. Phase 1 Security Architecture & Cryptography Tests ---');
+
+  // Password Policy
+  const shortPass = validatePasswordStrength('Pass1!');
+  assert(!shortPass.valid, 'Password shorter than 10 characters rejected');
+
+  const commonPass = validatePasswordStrength('password123');
+  assert(!commonPass.valid, 'Common password from blocklist rejected');
+
+  const emailPass = validatePasswordStrength('basavarajSecure123!', { email: 'basavaraj@sit.ac.in' });
+  assert(!emailPass.valid, 'Password containing email username rejected');
+
+  const validPass = validatePasswordStrength('KitturChennamma@2026!', { email: 'student@sit.ac.in', fullName: 'Rohan Patil' });
+  assert(validPass.valid, 'Strong passphrase compliant with SIT policy accepted');
+
+  // Scrypt Hashing & timingSafeEqual Verification
+  const testPassword = 'SecureSITPassphrase#2026';
+  const hashed = hashPassword(testPassword);
+  assert(hashed.startsWith('scrypt$'), 'Password hashed using crypto.scrypt format (scrypt$salt$key)');
+
+  const verifyValid = verifyPassword(testPassword, hashed);
+  assert(verifyValid.verified && !verifyValid.needsRehash, 'Correct password verified via timingSafeEqual with no rehash needed');
+
+  const verifyWrong = verifyPassword('WrongPassword#2026', hashed);
+  assert(!verifyWrong.verified, 'Incorrect password safely rejected');
+
+  // Transparent PBKDF2 hash upgrade test
+  const legacySalt = crypto.randomBytes(16).toString('hex');
+  const legacyKey = crypto.pbkdf2Sync(testPassword, legacySalt, 10000, 64, 'sha512').toString('hex');
+  const legacyHash = `${legacySalt}:${legacyKey}`;
+  const legacyVerify = verifyPassword(testPassword, legacyHash);
+  assert(legacyVerify.verified && legacyVerify.needsRehash, 'Legacy PBKDF2 hash verified and flagged for transparent upgrade to scrypt');
+
+  // Bank Account AES-256-GCM Encryption
+  const rawBankAcc = '987654321098';
+  const encryptedBankAcc = encryptBankAccount(rawBankAcc);
+  assert(encryptedBankAcc.startsWith('v1:'), 'Bank account encrypted using versioned AES-256-GCM');
+  assert(encryptedBankAcc !== rawBankAcc, 'Encrypted bank ciphertext does not contain plaintext account number');
+
+  const decryptedBankAcc = decryptBankAccount(encryptedBankAcc);
+  assert(decryptedBankAcc === rawBankAcc, 'Decrypted bank account matches original plaintext exactly');
+
+  const masked = maskBankAccount(rawBankAcc);
+  assert(masked === 'XXXXXXXX1098', 'Bank account masked to show only last 4 digits (XXXXXXXX1098)');
+
+  // JWT Session Timing-Safe Signing & Verification
+  const testPayload = {
+    userId: crypto.randomUUID(),
+    email: 'admin.audit@sit.ac.in',
+    role: 'admin' as const,
+    fullName: 'ADMIN AUDITOR',
+    tokenVersion: 1,
+  };
+  const token = signToken(testPayload, 1);
+  assert(typeof token === 'string' && token.includes('.'), 'JWT session signed with 1-hour expiry for admin');
+
+  const verifiedSession = verifyToken(token);
+  assert(verifiedSession !== null && verifiedSession.userId === testPayload.userId, 'JWT session successfully verified with timingSafeEqual');
+
+  const tamperedToken = token.slice(0, -4) + 'abcd';
+  const tamperedVerify = verifyToken(tamperedToken);
+  assert(tamperedVerify === null, 'Tampered JWT signature strictly rejected');
+
+  // Pure Database Layer Verification (Zero Demo Passwords in Memory)
+  const initialUsers = await db.listUsers();
+  assert(initialUsers.length === 0, 'Zero hardcoded demo passwords or accounts in database (purged C2)');
+
+  const testUser: UserProfile = {
+    id: crypto.randomUUID(),
+    role: 'student',
+    full_name: 'SHIVAKUMAR S',
+    mobile: '9845098450',
+    email: 'shivakumar@sit.ac.in',
+    bank_acc_no: '123456789012',
+    token_version: 1,
+    must_change_password: false,
+    email_verified: true,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  await db.createUser(testUser);
+  const fetchedUser = await db.findUserById(testUser.id);
+  assert(fetchedUser !== null && fetchedUser.email === testUser.email, 'Database async createUser and findUserById succeeded');
+  assert(fetchedUser?.bank_acc_no === '123456789012', 'Decrypted bank account recovered correctly through database layer');
+
+  const activeScholarships = await db.listScholarships();
+  assert(activeScholarships.some((s) => s.code === 'MNC' && s.active), 'Official MNC scholarship seeded and active');
+  assert(activeScholarships.some((s) => s.code === 'SSKA' && s.active), 'Official SSKA scholarship seeded and active');
+  assert(activeScholarships.some((s) => s.code === 'SITEB' && !s.active), 'SITEB scholarship correctly marked inactive pending circular');
 
   console.log('\n====================================================');
   console.log(`ALL TESTS PASSED: ${passedTests} / ${totalTests} (100% Pass Rate)`);

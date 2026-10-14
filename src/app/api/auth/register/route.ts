@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { hashPassword } from '@/lib/auth/password';
+import { hashPassword, validatePasswordStrength } from '@/lib/auth/password';
 import { setSessionCookie } from '@/lib/auth/session';
 import { UserProfile } from '@/lib/types';
 import { sendNotification } from '@/lib/notifications';
+import crypto from 'crypto';
 
 export async function POST(request: Request) {
   try {
@@ -25,15 +26,20 @@ export async function POST(request: Request) {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    const existing = db.findUserByEmail(normalizedEmail);
-    if (existing) {
+
+    // Enforce institutional password policy
+    const policyResult = validatePasswordStrength(password, {
+      email: normalizedEmail,
+      fullName: full_name,
+    });
+    if (!policyResult.valid) {
       return NextResponse.json(
-        { error: { message: 'An account with this email already exists. Please log in.' } },
-        { status: 409 }
+        { error: { message: policyResult.error } },
+        { status: 400 }
       );
     }
 
-    // Validate mobile
+    // Validate mobile (10 digits starting with 6-9)
     if (!/^[6-9]\d{9}$/.test(mobile.trim())) {
       return NextResponse.json(
         { error: { message: 'Enter a valid 10-digit mobile number starting with 6, 7, 8, or 9' } },
@@ -41,28 +47,42 @@ export async function POST(request: Request) {
       );
     }
 
+    const existing = await db.findUserByEmail(normalizedEmail);
+    if (existing) {
+      return NextResponse.json(
+        { error: { message: 'An account with this email already exists. Please log in.' } },
+        { status: 409 }
+      );
+    }
+
     const password_hash = hashPassword(password);
     const newProfile: UserProfile = {
-      id: `user_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: crypto.randomUUID(),
       role: 'student',
       full_name: full_name.trim().toUpperCase(),
       mobile: mobile.trim(),
       email: normalizedEmail,
       password_hash,
+      must_change_password: false,
+      email_verified: false,
+      token_version: 1,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
-    db.createUser(newProfile);
+    await db.createUser(newProfile);
+
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
 
     // Audit log
-    db.logAudit({
+    await db.logAudit({
       actor_id: newProfile.id,
       actor_email: newProfile.email,
       action: 'USER_REGISTERED',
       entity: 'profiles',
       entity_id: newProfile.id,
       meta: { role: 'student' },
+      ip: clientIp,
     });
 
     // Send welcome notification

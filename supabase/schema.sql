@@ -1,182 +1,231 @@
 -- ==============================================================================
 -- SIDDAGANGA INSTITUTE OF TECHNOLOGY (SIT), TUMAKURU - 572103
--- SCHOLARSHIP APPLICATION PORTAL - POSTGRESQL & ROW LEVEL SECURITY SCHEMA
+-- SCHOLARSHIP APPLICATION PORTAL - PRODUCTION POSTGRESQL SCHEMA
+-- Region: ap-south-1 (Mumbai, India) - Required for DPDP Act Compliance
 -- ==============================================================================
 
--- Enable UUID extension
-create extension if not exists "uuid-ossp";
+-- Enable required cryptographic extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- 1. PROFILES TABLE (Linked with auth.users if deployed on Supabase)
-create table if not exists public.profiles (
-    id uuid primary key default uuid_generate_v4(),
-    role text not null check (role in ('student', 'admin')) default 'student',
-    full_name text not null,
-    mobile text not null,
-    email text not null unique,
-    password_hash text, -- For standalone auth or mirrored from auth
-    bank_account_holder text,
-    bank_acc_no_encrypted text,
-    bank_name text,
-    bank_branch text,
-    bank_ifsc text,
-    created_at timestamptz not null default now(),
-    updated_at timestamptz not null default now()
+-- ------------------------------------------------------------------------------
+-- 1. PROFILES TABLE (Students, Evaluators/Reviewers, and Administrators)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    role TEXT NOT NULL CHECK (role IN ('student', 'reviewer', 'admin')) DEFAULT 'student',
+    full_name TEXT NOT NULL,
+    mobile TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT,
+    must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+    email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    token_version INTEGER NOT NULL DEFAULT 1,
+    two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    two_factor_secret TEXT,
+    two_factor_recovery_codes TEXT[],
+    bank_account_holder TEXT,
+    bank_acc_no_encrypted TEXT, -- Encrypted with AES-256-GCM (v1:iv:authTag:cipher)
+    bank_name TEXT,
+    bank_branch TEXT,
+    bank_ifsc TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE INDEX IF NOT EXISTS idx_profiles_email ON public.profiles(lower(email));
+CREATE INDEX IF NOT EXISTS idx_profiles_role ON public.profiles(role);
+
+-- ------------------------------------------------------------------------------
 -- 2. SCHOLARSHIPS TABLE
-create table if not exists public.scholarships (
-    id text primary key,
-    code text not null unique,
-    name text not null,
-    active boolean not null default true,
-    fee_label text not null default 'Total fee per year',
-    rules jsonb not null default '{}'::jsonb,
-    requires_recommendation boolean not null default false,
-    created_at timestamptz not null default now()
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.scholarships (
+    id TEXT PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    fee_label TEXT NOT NULL DEFAULT 'Total fee per year',
+    rules JSONB NOT NULL DEFAULT '{}'::jsonb,
+    requires_recommendation BOOLEAN NOT NULL DEFAULT FALSE,
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 3. CYCLES TABLE (Annual academic windows)
-create table if not exists public.cycles (
-    id text primary key,
-    scholarship_id text not null references public.scholarships(id) on delete cascade,
-    academic_year text not null,
-    opens_at timestamptz not null,
-    closes_at timestamptz not null,
-    status text not null check (status in ('open', 'closed', 'upcoming')) default 'open',
-    created_at timestamptz not null default now()
+-- ------------------------------------------------------------------------------
+-- 3. CYCLES TABLE (Annual academic submission windows)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.cycles (
+    id TEXT PRIMARY KEY,
+    scholarship_id TEXT NOT NULL REFERENCES public.scholarships(id) ON DELETE CASCADE,
+    academic_year TEXT NOT NULL, -- e.g. "2026-2027"
+    opens_at TIMESTAMPTZ NOT NULL,
+    closes_at TIMESTAMPTZ NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('open', 'closed', 'upcoming')) DEFAULT 'open',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- ------------------------------------------------------------------------------
 -- 4. APPLICATIONS TABLE
-create table if not exists public.applications (
-    id uuid primary key default uuid_generate_v4(),
-    ref_no text not null unique,
-    student_id uuid not null references public.profiles(id) on delete cascade,
-    cycle_id text not null references public.cycles(id) on delete cascade,
-    status text not null check (status in ('draft', 'submitted', 'under_review', 'needs_correction', 'shortlisted', 'accepted', 'rejected', 'withdrawn')) default 'draft',
-    data jsonb not null default '{}'::jsonb,
-    computed jsonb not null default '{}'::jsonb,
-    merit_score numeric default 0.0,
-    submitted_at timestamptz,
-    decided_at timestamptz,
-    decided_by uuid references public.profiles(id),
-    decision_remark text,
-    pdf_path text,
-    pdf_sha256 text,
-    hard_copy_received boolean not null default false,
-    created_at timestamptz not null default now(),
-    updated_at timestamptz not null default now(),
-    unique(student_id, cycle_id)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.applications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ref_no TEXT NOT NULL UNIQUE,
+    student_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    cycle_id TEXT NOT NULL REFERENCES public.cycles(id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK (
+        status IN ('draft', 'submitted', 'under_review', 'needs_correction', 'shortlisted', 'accepted', 'rejected', 'withdrawn')
+    ) DEFAULT 'draft',
+    current_step INTEGER NOT NULL DEFAULT 1,
+    data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    computed JSONB NOT NULL DEFAULT '{}'::jsonb,
+    merit_score NUMERIC DEFAULT 0.0,
+    submitted_at TIMESTAMPTZ,
+    decided_at TIMESTAMPTZ,
+    decided_by UUID REFERENCES public.profiles(id),
+    decision_remark TEXT,
+    pdf_path TEXT,
+    pdf_sha256 TEXT,
+    hard_copy_received BOOLEAN NOT NULL DEFAULT FALSE,
+    recommendation_status TEXT CHECK (recommendation_status IN ('pending', 'recommended', 'not_recommended')),
+    recommendation_note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(student_id, cycle_id)
 );
 
--- Indexes for lightning fast queries
-create index if not exists idx_applications_status on public.applications(status);
-create index if not exists idx_applications_cycle_merit on public.applications(cycle_id, merit_score desc);
-create index if not exists idx_applications_student_id on public.applications(student_id);
-create index if not exists idx_applications_ref_no on public.applications(ref_no);
+CREATE INDEX IF NOT EXISTS idx_applications_status ON public.applications(status);
+CREATE INDEX IF NOT EXISTS idx_applications_cycle_merit ON public.applications(cycle_id, merit_score DESC);
+CREATE INDEX IF NOT EXISTS idx_applications_student_id ON public.applications(student_id);
+CREATE INDEX IF NOT EXISTS idx_applications_ref_no ON public.applications(ref_no);
+CREATE INDEX IF NOT EXISTS idx_applications_updated_at ON public.applications(updated_at);
 
--- 5. APPLICATION FILES (Stored securely in private storage bucket)
-create table if not exists public.application_files (
-    id uuid primary key default uuid_generate_v4(),
-    application_id uuid not null references public.applications(id) on delete cascade,
-    kind text not null, -- photo, sig_student, sig_parent, cet_order, marks_card, income_cert, aadhaar, fee_receipt, principal_cert
-    storage_path text not null,
-    mime text not null,
-    size_bytes bigint not null,
-    sha256 text not null,
-    original_name text not null,
-    uploaded_at timestamptz not null default now()
+-- Database-level check trigger to reject submissions after cycle closes
+CREATE OR REPLACE FUNCTION check_application_submission_deadline()
+RETURNS trigger AS $$
+DECLARE
+    cycle_closes_at TIMESTAMPTZ;
+BEGIN
+    IF NEW.status = 'submitted' AND (OLD.status IS NULL OR OLD.status != 'submitted') THEN
+        SELECT closes_at INTO cycle_closes_at FROM public.cycles WHERE id = NEW.cycle_id;
+        IF cycle_closes_at IS NOT NULL AND now() > cycle_closes_at THEN
+            RAISE EXCEPTION 'Application deadline has passed. Cycle closed at %', cycle_closes_at;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_check_application_submission_deadline ON public.applications;
+CREATE TRIGGER trg_check_application_submission_deadline
+BEFORE INSERT OR UPDATE ON public.applications
+FOR EACH ROW EXECUTE FUNCTION check_application_submission_deadline();
+
+-- ------------------------------------------------------------------------------
+-- 5. APPLICATION FILES (Stored in private 'application-files' bucket)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.application_files (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    application_id UUID NOT NULL REFERENCES public.applications(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (
+        kind IN ('photo', 'sig_student', 'sig_parent', 'cet_order', 'marks_card', 'income_cert', 'aadhaar', 'fee_receipt', 'principal_cert')
+    ),
+    storage_path TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    sha256 TEXT NOT NULL,
+    original_name TEXT NOT NULL,
+    uploaded_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-create index if not exists idx_app_files_app_id on public.application_files(application_id);
+CREATE INDEX IF NOT EXISTS idx_app_files_app_id ON public.application_files(application_id);
 
--- 6. REMARKS (Internal reviewer/admin remarks & student correction notices)
-create table if not exists public.remarks (
-    id uuid primary key default uuid_generate_v4(),
-    application_id uuid not null references public.applications(id) on delete cascade,
-    author_id uuid not null references public.profiles(id) on delete cascade,
-    author_name text not null,
-    author_role text not null,
-    kind text not null check (kind in ('internal_note', 'correction_request', 'recommendation', 'decision')),
-    body text not null,
-    created_at timestamptz not null default now()
+-- ------------------------------------------------------------------------------
+-- 6. REMARKS (Reviewer notes, correction notices, committee decisions)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.remarks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    application_id UUID NOT NULL REFERENCES public.applications(id) ON DELETE CASCADE,
+    author_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    author_name TEXT NOT NULL,
+    author_role TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('internal_note', 'correction_request', 'recommendation', 'decision')),
+    body TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-create index if not exists idx_remarks_app_id on public.remarks(application_id);
+CREATE INDEX IF NOT EXISTS idx_remarks_app_id ON public.remarks(application_id);
 
--- 7. AUDIT LOG (Immutable record of all actions)
-create table if not exists public.audit_log (
-    id uuid primary key default uuid_generate_v4(),
-    actor_id text,
-    actor_email text,
-    action text not null,
-    entity text not null,
-    entity_id text not null,
-    meta jsonb default '{}'::jsonb,
-    ip text,
-    created_at timestamptz not null default now()
+-- ------------------------------------------------------------------------------
+-- 7. AUDIT LOG (Immutable, append-only security log)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.audit_log (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_id TEXT,
+    actor_email TEXT,
+    action TEXT NOT NULL,
+    entity TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    meta JSONB DEFAULT '{}'::jsonb,
+    ip TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-create index if not exists idx_audit_log_created_at on public.audit_log(created_at desc);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON public.audit_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_action ON public.audit_log(action);
 
--- ==============================================================================
--- ROW LEVEL SECURITY (RLS) POLICIES
--- ==============================================================================
+-- Append-only trigger: raise exception on UPDATE or DELETE regardless of caller
+CREATE OR REPLACE FUNCTION prevent_audit_log_tamper()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'Audit log entries are immutable and append-only. Modification or deletion is strictly forbidden.';
+END;
+$$ LANGUAGE plpgsql;
 
-alter table public.profiles enable row level security;
-alter table public.applications enable row level security;
-alter table public.application_files enable row level security;
-alter table public.remarks enable row level security;
-alter table public.audit_log enable row level security;
+DROP TRIGGER IF EXISTS trg_audit_log_immutable ON public.audit_log;
+CREATE TRIGGER trg_audit_log_immutable
+BEFORE UPDATE OR DELETE ON public.audit_log
+FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_tamper();
 
--- Profiles: Students can see and edit only their own profile
-create policy "Users can view own profile" on public.profiles
-    for select using (auth.uid() = id);
+-- Revoke UPDATE and DELETE privileges on audit_log
+REVOKE UPDATE, DELETE ON public.audit_log FROM anon, authenticated, service_role;
 
-create policy "Users can update own profile" on public.profiles
-    for update using (auth.uid() = id);
+-- ------------------------------------------------------------------------------
+-- 8. DISTRIBUTED RATE LIMITS (Atomic rate limiting for serverless execution)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.rate_limits (
+    key TEXT PRIMARY KEY,
+    points INTEGER NOT NULL DEFAULT 1,
+    expire_at TIMESTAMPTZ NOT NULL
+);
 
-create policy "Admins can view all profiles" on public.profiles
-    for select using (
-        exists (
-            select 1 from public.profiles p
-            where p.id = auth.uid() and p.role = 'admin'
-        )
-    );
+CREATE INDEX IF NOT EXISTS idx_rate_limits_expire_at ON public.rate_limits(expire_at);
 
--- Applications:
-create policy "Students can view own applications" on public.applications
-    for select using (auth.uid() = student_id);
+-- ------------------------------------------------------------------------------
+-- 9. PASSWORD RESETS & EMAIL VERIFICATION TOKENS
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.password_resets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
-create policy "Students can insert own drafts" on public.applications
-    for insert with check (auth.uid() = student_id);
+CREATE TABLE IF NOT EXISTS public.email_verifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
-create policy "Students can update own drafts or correction requests" on public.applications
-    for update using (
-        auth.uid() = student_id and status in ('draft', 'needs_correction')
-    );
-
-create policy "Staff can view all applications" on public.applications
-    for select using (
-        exists (
-            select 1 from public.profiles p
-            where p.id = auth.uid() and p.role = 'admin'
-        )
-    );
-
-create policy "Only Admins can update decisions" on public.applications
-    for update using (
-        exists (
-            select 1 from public.profiles p
-            where p.id = auth.uid() and p.role = 'admin'
-        )
-    );
-
--- ==============================================================================
--- INITIAL SEED DATA
--- ==============================================================================
-
-insert into public.scholarships (id, code, name, active, fee_label, rules, requires_recommendation)
-values 
+-- ------------------------------------------------------------------------------
+-- 10. SEED DATA (Official Scholarships & Open Cycle)
+-- ------------------------------------------------------------------------------
+INSERT INTO public.scholarships (id, code, name, active, fee_label, rules, requires_recommendation, description)
+VALUES 
 (
     'sch_mnc',
     'MNC',
@@ -191,7 +240,8 @@ values
         "allow_backlog": false,
         "max_awardees_per_year": 1
     }'::jsonb,
-    false
+    false,
+    'Endowment fund loan scholarship awarded on merit-cum-means for financially deserving students admitted through CET. Family annual income must not exceed Rs. 3,00,000.'
 ),
 (
     'sch_sska',
@@ -203,7 +253,8 @@ values
         "income_limit": 500000,
         "requires_hod_proctor_recommendation": true
     }'::jsonb,
-    true
+    true,
+    'Merit scholarship with recommendation from Proctor and Head of Department. Awarded to meritorious students facing financial distress.'
 ),
 (
     'sch_siteb',
@@ -212,6 +263,32 @@ values
     false,
     'Total fee per year',
     '{}'::jsonb,
-    false
+    false,
+    'Institutional aid for economically backward and socially challenged students (Inactive pending committee guidelines).'
 )
-on conflict (code) do nothing;
+ON CONFLICT (code) DO UPDATE SET
+    name = EXCLUDED.name,
+    rules = EXCLUDED.rules,
+    description = EXCLUDED.description;
+
+-- Active Academic Cycle
+-- TODO [COLLEGE DECISION REQUIRED]: Confirm circular dates for Academic Year 2026-2027
+INSERT INTO public.cycles (id, scholarship_id, academic_year, opens_at, closes_at, status)
+VALUES 
+(
+    'cycle_mnc_2026',
+    'sch_mnc',
+    '2026-2027',
+    '2026-09-01T00:00:00Z', -- TODO: Confirm official notification date
+    '2026-12-31T23:59:59Z', -- TODO: Confirm official last submission date
+    'open'
+),
+(
+    'cycle_sska_2026',
+    'sch_sska',
+    '2026-2027',
+    '2026-09-01T00:00:00Z',
+    '2026-12-31T23:59:59Z',
+    'open'
+)
+ON CONFLICT (id) DO NOTHING;

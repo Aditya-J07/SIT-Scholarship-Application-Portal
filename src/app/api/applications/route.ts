@@ -4,6 +4,17 @@ import { db } from '@/lib/db';
 import { ApplicationRecord } from '@/lib/types';
 import { calculateMeritScore } from '@/lib/merit';
 import { evaluateEligibility } from '@/lib/eligibility';
+import crypto from 'crypto';
+
+function generateUnambiguousRefNo(scholarshipCode: string, year: number): string {
+  const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const bytes = crypto.randomBytes(6);
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars[bytes[i] % chars.length];
+  }
+  return `SIT-${scholarshipCode.toUpperCase()}-${year}-${code}`;
+}
 
 export async function GET() {
   const session = await getCurrentSession();
@@ -12,8 +23,8 @@ export async function GET() {
   }
 
   if (session.role === 'student') {
-    const apps = db.listApplicationsForStudent(session.userId);
-    const scholarships = db.listScholarships();
+    const apps = await db.listApplicationsForStudent(session.userId);
+    const scholarships = await db.listScholarships();
     const enriched = apps.map((app) => {
       const sch = scholarships.find((s) => s.code === app.data.scholarship_code);
       return {
@@ -25,7 +36,7 @@ export async function GET() {
   }
 
   // Admins & Reviewers see all
-  const apps = db.listApplications();
+  const apps = await db.listApplications();
   return NextResponse.json({ applications: apps });
 }
 
@@ -43,7 +54,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: { message: 'Scholarship code is required' } }, { status: 400 });
     }
 
-    const scholarship = db.findScholarshipByCode(scholarship_code);
+    const scholarship = await db.findScholarshipByCode(scholarship_code);
     if (!scholarship) {
       return NextResponse.json({ error: { message: 'Scholarship not found' } }, { status: 404 });
     }
@@ -55,7 +66,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const cycle = db.findActiveCycleForScholarship(scholarship.id);
+    const cycle = await db.findActiveCycleForScholarship(scholarship.id);
     if (!cycle) {
       return NextResponse.json(
         { error: { message: 'The application window for this scholarship cycle is currently closed.' } },
@@ -64,7 +75,7 @@ export async function POST(request: Request) {
     }
 
     // Check if student already has an application in this cycle
-    const existing = db.findApplicationForStudentInCycle(session.userId, cycle.id);
+    const existing = await db.findApplicationForStudentInCycle(session.userId, cycle.id);
     if (existing) {
       // If draft or needs_correction, resume it
       if (existing.status === 'draft' || existing.status === 'needs_correction') {
@@ -77,10 +88,9 @@ export async function POST(request: Request) {
     }
 
     // Prefill data from student profile
-    const profile = db.findUserById(session.userId);
+    const profile = await db.findUserById(session.userId);
     const currentYear = new Date().getFullYear();
-    const count = db.listApplications().length + 1;
-    const ref_no = `SIT-${scholarship.code.toUpperCase()}-${currentYear}-${count.toString().padStart(6, '0')}`;
+    const ref_no = generateUnambiguousRefNo(scholarship.code, currentYear);
 
     const initialData = {
       scholarship_code: scholarship.code,
@@ -101,7 +111,7 @@ export async function POST(request: Request) {
     const eligibility_flags = evaluateEligibility(initialData, scholarship.rules, scholarship.code);
 
     const newApp: ApplicationRecord = {
-      id: `app_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: crypto.randomUUID(),
       ref_no,
       student_id: session.userId,
       cycle_id: cycle.id,
@@ -119,15 +129,18 @@ export async function POST(request: Request) {
       updated_at: new Date().toISOString(),
     };
 
-    db.createApplication(newApp);
+    await db.createApplication(newApp);
 
-    db.logAudit({
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+
+    await db.logAudit({
       actor_id: session.userId,
       actor_email: session.email,
       action: 'DRAFT_APPLICATION_CREATED',
       entity: 'applications',
       entity_id: newApp.id,
       meta: { ref_no: newApp.ref_no, scholarship: scholarship.code },
+      ip: clientIp,
     });
 
     return NextResponse.json({ success: true, application: newApp, resumed: false });

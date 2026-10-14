@@ -31,7 +31,9 @@ export default function LoginPage() {
       if (!res.ok) {
         setError(data.error?.message || 'Invalid credentials');
       } else {
-        if (data.user.role === 'admin') {
+        if (data.mustChangePassword) {
+          router.push('/change-password');
+        } else if (data.user.role === 'admin' || data.user.role === 'reviewer') {
           router.push('/admin');
         } else {
           router.push('/dashboard');

@@ -1,6 +1,6 @@
 // SIT Scholarship Application Portal - Core Types
 
-export type UserRole = 'student' | 'admin';
+export type UserRole = 'student' | 'reviewer' | 'admin';
 
 export type ApplicationStatus = 
   | 'draft'
@@ -19,6 +19,12 @@ export interface UserProfile {
   mobile: string;
   email: string;
   password_hash?: string;
+  must_change_password?: boolean;
+  email_verified?: boolean;
+  token_version?: number;
+  two_factor_enabled?: boolean;
+  two_factor_secret?: string;
+  two_factor_recovery_codes?: string[];
   bank_account_holder?: string;
   bank_acc_no?: string;
   bank_name?: string;

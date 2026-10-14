@@ -12,7 +12,7 @@ export async function POST(
   }
 
   const { id } = await params;
-  const application = db.findApplicationById(id);
+  const application = await db.findApplicationById(id);
   if (!application) {
     return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
   }
@@ -28,17 +28,20 @@ export async function POST(
     );
   }
 
-  const updated = db.updateApplication(id, {
+  const updated = await db.updateApplication(id, {
     status: 'withdrawn',
   });
 
-  db.logAudit({
+  const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+
+  await db.logAudit({
     actor_id: session.userId,
     actor_email: session.email,
     action: 'APPLICATION_WITHDRAWN',
     entity: 'applications',
     entity_id: id,
     meta: { ref_no: application.ref_no },
+    ip: clientIp,
   });
 
   return NextResponse.json({ success: true, application: updated });

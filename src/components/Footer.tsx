@@ -187,13 +187,14 @@ export default function Footer() {
               {t.footer_anti_ragging_title}
             </h3>
             <div className="bg-white border border-gray-200 p-3 mb-4 leading-relaxed">
-              <div className="font-bold text-gray-800">Dr. K V Suresh</div>
-              <div className="text-[11px] text-gray-500">Anti Ragging Nodal Officer</div>
+              <div className="font-bold text-gray-800">SIT Scholarship Cell / Helpdesk</div>
+              <div className="text-[11px] text-gray-500">{/* TODO [COLLEGE DECISION REQUIRED]: Designate official nodal officer */}Nodal Officer (Scholarships)</div>
               <div className="mt-1 font-mono text-[#AC3D47]">
-                <a href="mailto:antiragging@sit.ac.in" className="hover:underline">antiragging@sit.ac.in</a>
+                {/* TODO [COLLEGE DECISION REQUIRED]: Designate official scholarship email */}
+                <span className="text-gray-700">helpdesk@sit.ac.in (TODO: Confirm official email)</span>
               </div>
               <div className="font-mono text-[11px] text-gray-700 mt-0.5">
-                +91 9480408091 • 0816-2214002
+                0816-2214002
               </div>
             </div>
 

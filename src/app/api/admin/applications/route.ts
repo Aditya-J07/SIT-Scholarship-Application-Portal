@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getCurrentSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
+import { maskBankAccount } from '@/lib/crypto/encryption';
 
 export async function GET(request: Request) {
   const session = await getCurrentSession();
-  if (!session || session.role !== 'admin') {
-    return NextResponse.json({ error: { message: 'Unauthorized administrator access required' } }, { status: 403 });
+  if (!session || (session.role !== 'admin' && session.role !== 'reviewer')) {
+    return NextResponse.json({ error: { message: 'Unauthorized staff access required' } }, { status: 403 });
   }
 
   const { searchParams } = new URL(request.url);
@@ -13,12 +14,12 @@ export async function GET(request: Request) {
   const scholarship = searchParams.get('scholarship') || '';
   const status = searchParams.get('status') || '';
   const yearOfStudy = searchParams.get('year') ? Number(searchParams.get('year')) : null;
-  const sortBy = searchParams.get('sortBy') || 'merit'; // 'merit', 'date', 'ref'
+  const sortBy = searchParams.get('sortBy') || 'merit'; // 'merit', 'income', 'date'
   const sortOrder = searchParams.get('order') || 'desc';
   const page = Math.max(1, Number(searchParams.get('page') || 1));
   const pageSize = Math.max(1, Number(searchParams.get('pageSize') || 25));
 
-  let apps = db.listApplications();
+  let apps = await db.listApplications();
 
   // Search filter
   if (search) {
@@ -67,8 +68,20 @@ export async function GET(request: Request) {
   const total = apps.length;
   const paginated = apps.slice((page - 1) * pageSize, page * pageSize);
 
+  // Mask bank account numbers in application table per DPDP compliance
+  const maskedApps = paginated.map((app) => ({
+    ...app,
+    data: {
+      ...app.data,
+      bank_acc_no: app.data.bank_acc_no ? maskBankAccount(app.data.bank_acc_no) : undefined,
+      confirm_bank_acc_no: app.data.confirm_bank_acc_no
+        ? maskBankAccount(app.data.confirm_bank_acc_no)
+        : undefined,
+    },
+  }));
+
   // Summary counts for dashboard overview
-  const allApps = db.listApplications();
+  const allApps = await db.listApplications();
   const summary = {
     totalApplications: allApps.length,
     submittedCount: allApps.filter((a) => a.status === 'submitted').length,
@@ -80,7 +93,7 @@ export async function GET(request: Request) {
   };
 
   return NextResponse.json({
-    applications: paginated,
+    applications: maskedApps,
     total,
     page,
     pageSize,

@@ -7,8 +7,9 @@ export default async function VerifyPage({
   params: Promise<{ ref_no: string }>;
 }) {
   const { ref_no } = await params;
-  const application = db.findApplicationByRefNo(ref_no);
-  const scholarship = application ? db.findScholarshipByCode(application.data.scholarship_code || '') : null;
+  const application = await db.findApplicationByRefNo(ref_no);
+  const scholarship = application ? await db.findScholarshipByCode(application.data.scholarship_code || '') : null;
+  const cycle = application ? await db.findCycleById(application.cycle_id) : null;
 
   return (
     <div className="mx-auto max-w-xl px-4 py-12">
@@ -47,7 +48,7 @@ export default async function VerifyPage({
               </div>
               <div className="flex justify-between py-1 border-b border-gray-200">
                 <span className="text-gray-500 font-medium">Academic Cycle:</span>
-                <span className="font-semibold text-gray-800">2026–2027</span>
+                <span className="font-semibold text-gray-800">{cycle?.academic_year || '2026–2027'}</span>
               </div>
               <div className="flex justify-between py-1 border-b border-gray-200">
                 <span className="text-gray-500 font-medium">Current Status:</span>

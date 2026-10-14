@@ -5,12 +5,17 @@ import { ApplicationFileRecord } from '@/lib/types';
 import { storage } from '@/lib/storage';
 import crypto from 'crypto';
 
-const ALLOWED_MIMES = [
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'application/pdf',
-];
+const ALLOWED_KINDS = new Set([
+  'photo',
+  'sig_student',
+  'sig_parent',
+  'cet_order',
+  'marks_card',
+  'income_cert',
+  'aadhaar',
+  'fee_receipt',
+  'principal_cert',
+]);
 
 export async function POST(
   request: Request,
@@ -22,7 +27,7 @@ export async function POST(
   }
 
   const { id: applicationId } = await params;
-  const application = db.findApplicationById(applicationId);
+  const application = await db.findApplicationById(applicationId);
   if (!application) {
     return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
   }
@@ -45,17 +50,19 @@ export async function POST(
     const file = formData.get('file') as File | null;
     const kind = formData.get('kind') as ApplicationFileRecord['kind'] | null;
 
-    if (!file || !kind) {
-      return NextResponse.json({ error: { message: 'File and file kind are required' } }, { status: 400 });
+    if (!file || !kind || !ALLOWED_KINDS.has(kind)) {
+      return NextResponse.json(
+        { error: { message: 'Invalid upload request. File and valid file kind are required.' } },
+        { status: 400 }
+      );
     }
 
-    const mime = file.type;
     const sizeBytes = file.size;
 
-    // Check size limits
+    // Strict size limits
     const maxPhotoSize = 1 * 1024 * 1024; // 1 MB
-    const maxSigSize = 350 * 1024; // 350 KB
-    const maxDocSize = 2 * 1024 * 1024; // 2 MB
+    const maxSigSize = 500 * 1024; // 500 KB
+    const maxDocSize = 3 * 1024 * 1024; // 3 MB
 
     if (kind === 'photo' && sizeBytes > maxPhotoSize) {
       return NextResponse.json(
@@ -65,27 +72,20 @@ export async function POST(
     }
     if ((kind === 'sig_student' || kind === 'sig_parent') && sizeBytes > maxSigSize) {
       return NextResponse.json(
-        { error: { message: 'Signature file size must be under 300 KB' } },
+        { error: { message: 'Signature file size must be under 500 KB' } },
         { status: 400 }
       );
     }
     if (sizeBytes > maxDocSize) {
       return NextResponse.json(
-        { error: { message: 'Document size must not exceed 2 MB' } },
-        { status: 400 }
-      );
-    }
-
-    if (!ALLOWED_MIMES.includes(mime)) {
-      return NextResponse.json(
-        { error: { message: 'Invalid file format. Only PDF, JPG, and PNG are accepted.' } },
+        { error: { message: 'Document size must not exceed 3 MB' } },
         { status: 400 }
       );
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
 
-    // Magic bytes check to ensure no executables / fake extensions
+    // Magic byte sniffing to identify genuine MIME type
     const isPdf = buffer.length > 4 && buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46; // %PDF
     const isJpg = buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
     const isPng = buffer.length > 4 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47; // .PNG
@@ -93,30 +93,76 @@ export async function POST(
 
     if (!isPdf && !isJpg && !isPng && !isWebp) {
       return NextResponse.json(
-        { error: { message: 'File failed security verification. Corrupt or invalid file content.' } },
+        { error: { message: 'File rejected. Only valid PDF, JPEG, PNG, and WEBP formats are accepted.' } },
         { status: 400 }
       );
     }
 
-    const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
-    const ext = isPdf ? 'pdf' : (isPng ? 'png' : 'jpg');
-    const filename = `${application.id}_${kind}.${ext}`;
+    // Photo and signatures MUST be images, never PDF
+    if ((kind === 'photo' || kind === 'sig_student' || kind === 'sig_parent') && isPdf) {
+      return NextResponse.json(
+        { error: { message: 'Photographs and signatures must be images (JPG/PNG/WEBP), not PDF documents.' } },
+        { status: 400 }
+      );
+    }
 
-    await storage.saveFile(filename, buffer, mime);
+    let detectedMime = 'application/octet-stream';
+    let ext = 'bin';
+    if (isPdf) {
+      detectedMime = 'application/pdf';
+      ext = 'pdf';
+    } else if (isPng) {
+      detectedMime = 'image/png';
+      ext = 'png';
+    } else if (isWebp) {
+      detectedMime = 'image/webp';
+      ext = 'webp';
+    } else if (isJpg) {
+      detectedMime = 'image/jpeg';
+      ext = 'jpg';
+    }
+
+    const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+    const safeFileId = crypto.randomUUID();
+    const storagePath = `${application.id}/${kind}-${safeFileId}.${ext}`;
+
+    await storage.saveFile(storagePath, buffer, detectedMime);
+
+    // Sanitize original filename (remove path traversal attempts and control chars)
+    const sanitizedName = file.name
+      .replace(/[^\w.-]/g, '_')
+      .replace(/\.\.+/g, '.')
+      .slice(0, 100);
 
     const fileRecord: ApplicationFileRecord = {
-      id: `file_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: safeFileId,
       application_id: application.id,
       kind,
-      storage_path: filename,
-      mime,
+      storage_path: storagePath,
+      mime: detectedMime,
       size_bytes: sizeBytes,
       sha256,
-      original_name: file.name,
+      original_name: sanitizedName || `${kind}.${ext}`,
       uploaded_at: new Date().toISOString(),
     };
 
-    db.saveFileRecord(fileRecord);
+    await db.saveFileRecord(fileRecord);
+
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+    await db.logAudit({
+      actor_id: session.userId,
+      actor_email: session.email,
+      action: 'FILE_UPLOADED',
+      entity: 'application_files',
+      entity_id: fileRecord.id,
+      meta: {
+        application_id: application.id,
+        kind,
+        sha256,
+        size_bytes: sizeBytes,
+      },
+      ip: clientIp,
+    });
 
     return NextResponse.json({
       success: true,
@@ -145,7 +191,7 @@ export async function GET(
   }
 
   const { id: applicationId } = await params;
-  const application = db.findApplicationById(applicationId);
+  const application = await db.findApplicationById(applicationId);
   if (!application) {
     return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
   }
@@ -154,7 +200,8 @@ export async function GET(
     return NextResponse.json({ error: { message: 'Forbidden' } }, { status: 403 });
   }
 
-  const files = db.listFilesForApplication(applicationId).map((f) => ({
+  const fileRecords = await db.listFilesForApplication(applicationId);
+  const files = fileRecords.map((f) => ({
     id: f.id,
     kind: f.kind,
     original_name: f.original_name,

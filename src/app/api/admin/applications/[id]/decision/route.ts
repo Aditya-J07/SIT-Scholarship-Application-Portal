@@ -2,18 +2,35 @@ import { NextResponse } from 'next/server';
 import { getCurrentSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { sendNotification } from '@/lib/notifications';
+import { NotificationType } from '@/lib/notifications';
+import crypto from 'crypto';
+
+const ALLOWED_ACTIONS = new Set([
+  'recommendation',
+  'accept',
+  'reject',
+  'shortlist',
+  'correction',
+  'under_review',
+]);
+
+const ALLOWED_RECOMMENDATION_STATUSES = new Set([
+  'recommended',
+  'not_recommended',
+  'pending',
+]);
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getCurrentSession();
-  if (!session || session.role !== 'admin') {
-    return NextResponse.json({ error: { message: 'Unauthorized administrator access required' } }, { status: 403 });
+  if (!session || (session.role !== 'admin' && session.role !== 'reviewer')) {
+    return NextResponse.json({ error: { message: 'Unauthorized staff access required' } }, { status: 403 });
   }
 
   const { id } = await params;
-  const application = db.findApplicationById(id);
+  const application = await db.findApplicationById(id);
   if (!application) {
     return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
   }
@@ -22,47 +39,66 @@ export async function POST(
     const body = await request.json();
     const { action, remark, hard_copy_received, recommendation_status, recommendation_note } = body;
 
-    // Reviewer recommendation (HoD / Proctor)
+    // Validate action against allow-list (return 400, not 500)
+    if (!action || !ALLOWED_ACTIONS.has(action)) {
+      return NextResponse.json(
+        { error: { message: 'Invalid or missing action parameter' } },
+        { status: 400 }
+      );
+    }
+
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+
+    // Reviewer recommendation (HoD / Proctor) - accessible to both reviewer and admin
     if (action === 'recommendation') {
-      const updated = db.updateApplication(id, {
-        recommendation_status: recommendation_status || 'recommended',
+      const recStatus = recommendation_status || 'recommended';
+      if (!ALLOWED_RECOMMENDATION_STATUSES.has(recStatus)) {
+        return NextResponse.json(
+          { error: { message: 'Invalid recommendation_status parameter' } },
+          { status: 400 }
+        );
+      }
+
+      const updated = await db.updateApplication(id, {
+        recommendation_status: recStatus,
         recommendation_note: recommendation_note || remark,
       });
 
-      db.addRemark({
-        id: `rem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      await db.addRemark({
+        id: crypto.randomUUID(),
         application_id: id,
         author_id: session.userId,
         author_name: session.fullName,
         author_role: session.role,
         kind: 'recommendation',
-        body: `Recommendation marked as ${recommendation_status.toUpperCase()}: ${remark || 'Verified by HoD/Proctor'}`,
+        body: `Recommendation marked as ${recStatus.toUpperCase()}: ${remark || 'Verified by Reviewer/HoD'}`,
         created_at: new Date().toISOString(),
       });
 
-      db.logAudit({
+      await db.logAudit({
         actor_id: session.userId,
         actor_email: session.email,
         action: 'REVIEWER_RECOMMENDATION_RECORDED',
         entity: 'applications',
         entity_id: id,
-        meta: { recommendation_status, remark },
+        meta: { recommendation_status: recStatus, remark },
+        ip: clientIp,
       });
 
       return NextResponse.json({ success: true, application: updated });
     }
 
-    // Role check: Only admin can accept or reject
-    if (['accept', 'reject'].includes(action) && session.role !== 'admin') {
+    // Role check: Only admin can accept, reject, request correction, or shortlist
+    if (session.role !== 'admin') {
       return NextResponse.json(
-        { error: { message: 'Only Accounts / Committee Administrators can officially Accept or Reject applications' } },
+        { error: { message: 'Only Accounts / Committee Administrators can officially make application decisions or request corrections' } },
         { status: 403 }
       );
     }
 
     if (action === 'reject' && (!remark || remark.trim().length === 0)) {
       return NextResponse.json(
-        { error: { message: 'A reason is mandatory when rejecting an application' } },
+        { error: { message: 'A rejection reason is mandatory' } },
         { status: 400 }
       );
     }
@@ -75,7 +111,7 @@ export async function POST(
     }
 
     let newStatus = application.status;
-    let notifType: any = null;
+    let notifType: NotificationType | null = null;
 
     if (action === 'accept') {
       newStatus = 'accepted';
@@ -93,7 +129,7 @@ export async function POST(
       newStatus = 'under_review';
     }
 
-    const updated = db.updateApplication(id, {
+    const updated = await db.updateApplication(id, {
       status: newStatus,
       decided_at: new Date().toISOString(),
       decided_by: session.userId,
@@ -103,8 +139,8 @@ export async function POST(
 
     // Record Remark thread entry
     if (remark) {
-      db.addRemark({
-        id: `rem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      await db.addRemark({
+        id: crypto.randomUUID(),
         application_id: id,
         author_id: session.userId,
         author_name: session.fullName,
@@ -116,7 +152,7 @@ export async function POST(
     }
 
     // Record in Audit Log
-    db.logAudit({
+    await db.logAudit({
       actor_id: session.userId,
       actor_email: session.email,
       action: `APPLICATION_DECISION_${action.toUpperCase()}`,
@@ -126,12 +162,14 @@ export async function POST(
         previous_status: application.status,
         new_status: newStatus,
         remark,
+        hard_copy_received,
       },
+      ip: clientIp,
     });
 
     // Send Notification to student
-    const student = db.findUserById(application.student_id);
-    const scholarship = db.findScholarshipByCode(application.data.scholarship_code || 'MNC');
+    const student = await db.findUserById(application.student_id);
+    const scholarship = await db.findScholarshipByCode(application.data.scholarship_code || 'MNC');
     if (student && notifType) {
       await sendNotification({
         toEmail: student.email,

@@ -1,18 +1,19 @@
 import { NextResponse } from 'next/server';
 import { getCurrentSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
+import crypto from 'crypto';
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getCurrentSession();
-  if (!session || session.role !== 'admin') {
-    return NextResponse.json({ error: { message: 'Unauthorized administrator access required' } }, { status: 403 });
+  if (!session || (session.role !== 'admin' && session.role !== 'reviewer')) {
+    return NextResponse.json({ error: { message: 'Unauthorized staff access required' } }, { status: 403 });
   }
 
   const { id } = await params;
-  const application = db.findApplicationById(id);
+  const application = await db.findApplicationById(id);
   if (!application) {
     return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
   }
@@ -25,8 +26,8 @@ export async function POST(
       return NextResponse.json({ error: { message: 'Remark cannot be empty' } }, { status: 400 });
     }
 
-    const remark = db.addRemark({
-      id: `rem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    const remark = await db.addRemark({
+      id: crypto.randomUUID(),
       application_id: id,
       author_id: session.userId,
       author_name: session.fullName,
@@ -36,13 +37,16 @@ export async function POST(
       created_at: new Date().toISOString(),
     });
 
-    db.logAudit({
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+
+    await db.logAudit({
       actor_id: session.userId,
       actor_email: session.email,
       action: 'REMARK_ADDED',
       entity: 'remarks',
       entity_id: remark.id,
       meta: { application_id: id, kind },
+      ip: clientIp,
     });
 
     return NextResponse.json({ success: true, remark });

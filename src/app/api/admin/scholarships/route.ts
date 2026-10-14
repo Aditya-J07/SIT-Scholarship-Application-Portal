@@ -8,8 +8,8 @@ export async function GET() {
     return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 403 });
   }
 
-  const scholarships = db.listScholarships();
-  const cycles = db.listCycles();
+  const scholarships = await db.listScholarships();
+  const cycles = await db.listCycles();
 
   return NextResponse.json({ scholarships, cycles });
 }
@@ -28,7 +28,7 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: { message: 'Scholarship ID is required' } }, { status: 400 });
     }
 
-    const updated = db.updateScholarship(id, {
+    const updated = await db.updateScholarship(id, {
       ...(active !== undefined && { active }),
       ...(fee_label && { fee_label }),
       ...(rules && { rules }),
@@ -36,13 +36,16 @@ export async function PUT(request: Request) {
       ...(description && { description }),
     });
 
-    db.logAudit({
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+
+    await db.logAudit({
       actor_id: session.userId,
       actor_email: session.email,
       action: 'SCHOLARSHIP_CONFIG_UPDATED',
       entity: 'scholarships',
       entity_id: id,
       meta: { active, rules },
+      ip: clientIp,
     });
 
     return NextResponse.json({ success: true, scholarship: updated });

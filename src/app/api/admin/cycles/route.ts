@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getCurrentSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { AcademicCycle } from '@/lib/types';
+import crypto from 'crypto';
 
 export async function GET() {
   const session = await getCurrentSession();
@@ -9,7 +10,7 @@ export async function GET() {
     return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 403 });
   }
 
-  const cycles = db.listCycles();
+  const cycles = await db.listCycles();
   return NextResponse.json({ cycles });
 }
 
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
     const { scholarship_id, academic_year, opens_at, closes_at, status } = body;
 
     const cycle: AcademicCycle = {
-      id: `cycle_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: crypto.randomUUID(),
       scholarship_id,
       academic_year,
       opens_at,
@@ -33,15 +34,18 @@ export async function POST(request: Request) {
       created_at: new Date().toISOString(),
     };
 
-    db.createCycle(cycle);
+    await db.createCycle(cycle);
 
-    db.logAudit({
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+
+    await db.logAudit({
       actor_id: session.userId,
       actor_email: session.email,
       action: 'CYCLE_CREATED',
       entity: 'cycles',
       entity_id: cycle.id,
       meta: { academic_year, scholarship_id },
+      ip: clientIp,
     });
 
     return NextResponse.json({ success: true, cycle });
@@ -61,20 +65,23 @@ export async function PUT(request: Request) {
     const body = await request.json();
     const { id, academic_year, opens_at, closes_at, status } = body;
 
-    const updated = db.updateCycle(id, {
+    const updated = await db.updateCycle(id, {
       ...(academic_year && { academic_year }),
       ...(opens_at && { opens_at }),
       ...(closes_at && { closes_at }),
       ...(status && { status }),
     });
 
-    db.logAudit({
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+
+    await db.logAudit({
       actor_id: session.userId,
       actor_email: session.email,
       action: 'CYCLE_UPDATED',
       entity: 'cycles',
       entity_id: id,
       meta: { opens_at, closes_at, status },
+      ip: clientIp,
     });
 
     return NextResponse.json({ success: true, cycle: updated });

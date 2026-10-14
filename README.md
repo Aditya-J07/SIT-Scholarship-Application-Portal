@@ -42,17 +42,23 @@ The **SIT Scholarship Application Portal** is an official, fast, minimal, govern
 
 ---
 
-## 3. Demo Accounts & Credentials
+## 3. Account Access & Initial Setup
 
-For testing and demonstration, pre-seeded accounts are available on the login page:
+No hardcoded default accounts or static passwords exist in this codebase.
 
-| Role | Email | Password | Access / Purpose |
-|---|---|---|---|
-| **Student** | `student@sit.ac.in` | `Student@123` | Apply online, save drafts, upload documents, track status, download PDF |
-| **Reviewer (HoD/Proctor)** | `reviewer@sit.ac.in` | `Reviewer@123` | Review applications, add internal remarks, mark *Recommended* / *Not Recommended* |
-| **Admin (Accounts / Committee)** | `admin@sit.ac.in` | `Admin@123` | Scrutiny dashboard, Accept/Reject, Merit selection helper, manage scholarships, export CSV/ZIP |
+### Bootstrapping the Initial Administrator
+Run the bootstrap script locally or in production deployment:
+```bash
+ADMIN_EMAIL="admin@sit.ac.in" ADMIN_PASSWORD="<YourSecurePassword10+Chars>" npx tsx scripts/create-admin.ts
+```
+The bootstrap utility:
+1. Enforces the institutional password policy (minimum 10 characters, uppercase, lowercase, numbers, symbols, blocklist check).
+2. Hashes credentials with `crypto.scrypt` (N=16384, r=8, p=1) using a per-user cryptographically random salt.
+3. Automatically sets `must_change_password = true`.
+4. Forces the administrator to update their password at `/change-password` upon first login.
 
-*Quick-fill demo buttons are provided on the login page (`/login`) for convenience.*
+### Student Self-Registration
+Students create accounts directly via the public `/register` portal with DPDP Act 2023 consent acknowledgement.
 
 ---
 
@@ -122,16 +128,17 @@ The portal will be active at: **`http://localhost:3000`**
 
 ## 7. Cloud Deployment (Supabase & Vercel)
 
-1. **Database:** Execute `supabase/schema.sql` inside the Supabase SQL Editor. This initializes all tables, indexes, Row Level Security (RLS) policies, and seed data.
-2. **Storage:** Create a private bucket named `scholarship_files`.
+1. **Database:** Execute `supabase/migrations/001_init.sql` inside the Supabase SQL Editor (Region: **`ap-south-1` (Mumbai, India)** for statutory DPDP Act compliance). This creates the tables, append-only immutable audit log trigger, submission deadline check trigger, and seeded scholarships.
+2. **Private Storage:** Create a private bucket named **`application-files`** in Supabase Storage with public access disabled.
 3. **Environment Variables:**
    ```env
    NODE_ENV=production
-   NEXT_PUBLIC_APP_URL=https://your-domain.vercel.app
-   JWT_SECRET=your-random-32-character-secret
-   # Optional Supabase credentials:
-   # NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-   # NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-   # SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+   NEXT_PUBLIC_APP_URL=https://sitscholarship.vercel.app
+   JWT_SECRET=<random-cryptographic-secret-minimum-32-chars>
+   ENCRYPTION_KEY=<random-32-byte-hex-string-for-aes-256-gcm>
+   NEXT_PUBLIC_SUPABASE_URL=https://<your-project>.supabase.co
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-anon-or-publishable-key>
+   SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key-server-only>
    ```
-4. **Deploy:** Deploy directly to Vercel (recommended region: Mumbai `ap-south-1`).
+4. **Deploy:** Deploy directly to Vercel (recommended region: Mumbai `bom1`).
+5. **Bootstrap Admin:** Run `ADMIN_EMAIL="admin@sit.ac.in" ADMIN_PASSWORD="..." npx tsx scripts/create-admin.ts` to create the initial admin user.
