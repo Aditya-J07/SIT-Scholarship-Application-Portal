@@ -1,12 +1,31 @@
 import { NextResponse } from 'next/server';
+import { getCurrentSession } from '@/lib/auth/session';
+import { checkRateLimit, getClientIp, rateLimitResponse } from '@/lib/rate-limit';
 
-// In-memory cache for IFSC lookups
+// Bounded in-memory cache for IFSC lookups (capped at 500 entries)
+const MAX_CACHE_ENTRIES = 500;
 const ifscCache = new Map<string, { bank: string; branch: string; address: string; city: string }>();
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ code: string }> }
 ) {
+  // 1. Require authenticated session
+  const session = await getCurrentSession();
+  if (!session) {
+    return NextResponse.json(
+      { error: { message: 'Authentication required to query IFSC details.' } },
+      { status: 401 }
+    );
+  }
+
+  // 2. Rate limit: 30 requests per minute per IP
+  const clientIp = getClientIp(request);
+  const rateLimit = await checkRateLimit(`ifsc:ip:${clientIp}`, 60, 30);
+  if (!rateLimit.allowed) {
+    return rateLimitResponse(rateLimit.retryAfter);
+  }
+
   const { code } = await params;
   if (!code) {
     return NextResponse.json({ error: { message: 'IFSC code is required' } }, { status: 400 });
@@ -43,6 +62,12 @@ export async function GET(
       address: data.ADDRESS || '',
       city: data.CITY || '',
     };
+
+    // Maintain bounded size
+    if (ifscCache.size >= MAX_CACHE_ENTRIES) {
+      const firstKey = ifscCache.keys().next().value;
+      if (firstKey) ifscCache.delete(firstKey);
+    }
 
     ifscCache.set(cleanCode, result);
     return NextResponse.json({ success: true, data: result });

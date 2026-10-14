@@ -10,6 +10,7 @@ export interface SessionPayload {
   fullName: string;
   mustChangePassword: boolean;
   bank_acc_last4?: string;
+  aal?: "aal1" | "aal2";
   exp?: number;
 }
 
@@ -43,6 +44,16 @@ export async function getCurrentSession(): Promise<SessionPayload | null> {
       };
     }
 
+    let aal: "aal1" | "aal2" = "aal1";
+    try {
+      const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      if (aalData?.currentLevel === "aal2") {
+        aal = "aal2";
+      }
+    } catch {
+      aal = "aal1";
+    }
+
     return {
       userId: user.id,
       email: profile.email || user.email || "",
@@ -50,6 +61,7 @@ export async function getCurrentSession(): Promise<SessionPayload | null> {
       fullName: profile.full_name,
       mustChangePassword: profile.must_change_password ?? false,
       bank_acc_last4: profile.bank_acc_last4,
+      aal,
     };
   } catch {
     return null;

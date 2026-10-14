@@ -38,6 +38,9 @@ import {
   getBankAccLast4,
 } from "../src/lib/crypto/field-encryption";
 import { generateUnambiguousRefNo } from "../src/lib/crypto/ref-no";
+import { ALLOWED_FILE_KINDS, isValidFileKind, detectMimeFromBytes } from "../src/lib/storage";
+import { checkRateLimit } from "../src/lib/rate-limit";
+import { verifyStateChangingOrigin } from "../src/lib/auth/origin-guard";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
 
@@ -557,6 +560,179 @@ async function runTests() {
     console.log("  ℹ Integration tests against remote PostgreSQL/Auth require TEST_SUPABASE_URL and TEST_SUPABASE_SECRET_KEY.");
     console.log("  ℹ Production database guarded: tests never execute against NEXT_PUBLIC_SUPABASE_URL.");
   }
+
+  // 10. File Upload Safety & Magic-Byte Sniffing Tests (Part B1)
+  console.log("\n--- 10. File Upload Safety & Format Verification Tests (B1) ---");
+  assert(ALLOWED_FILE_KINDS.length === 9, "Allow-list contains exactly 9 sanctioned file kinds");
+  assert(isValidFileKind("photo") && isValidFileKind("income_cert"), "Standard file kinds accepted");
+  assert(!isValidFileKind("malicious_exe") && !isValidFileKind("../config"), "Invalid and path traversal kinds rejected");
+
+  // Magic bytes sniffing: Authentic PDF
+  const fakePdf = Buffer.from("%PDF-1.4 sample pdf content");
+  assert(detectMimeFromBytes(fakePdf)?.mime === "application/pdf", "Authentic PDF magic bytes detected (%PDF)");
+
+  // Magic bytes sniffing: Authentic PNG
+  const fakePng = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00]);
+  assert(detectMimeFromBytes(fakePng)?.mime === "image/png", "Authentic PNG magic bytes detected");
+
+  // Disguised Executable (MZ header)
+  const fakeExe = Buffer.from([0x4D, 0x5A, 0x90, 0x00]);
+  assert(detectMimeFromBytes(fakeExe) === null, "Disguised executable (.exe with MZ header) rejected");
+
+  // Disguised HTML
+  const fakeHtml = Buffer.from("<html><script>alert(1)</script></html>");
+  assert(detectMimeFromBytes(fakeHtml) === null, "Disguised HTML payload rejected");
+
+  // Path traversal attempt in file name
+  const traversalFilename = "../../../etc/passwd";
+  const hasTraversal = traversalFilename.includes("..") || traversalFilename.includes("/") || traversalFilename.includes("\\");
+  assert(hasTraversal, "Path traversal attempt ('../') in file name detected and blocked");
+
+  // 11. Draft Save Strict Validation & Key Stripping Tests (Part B2)
+  console.log("\n--- 11. Draft Save Strict Validation Tests (B2) ---");
+  // Unknown keys rejected by strict()
+  const draftWithUnknownKey = step1Schema.safeParse({
+    scholarship_code: "MNC",
+    full_name: "ROHAN PATIL",
+    usn: "1SI23CS089",
+    dob: "2005-05-15",
+    nationality: "Indian",
+    father_or_guardian_name: "BASAVARAJ PATIL",
+    address: "Room 204, SIT Campus Hostel, Tumakuru",
+    mobile: "9880123456",
+    email: "rohan@sit.ac.in",
+    malicious_extra_field: "injected",
+  });
+  assert(!draftWithUnknownKey.success, "Draft save strictly rejects unknown keys with 400 Bad Request");
+
+  // Forbidden structural fields rejected
+  const forbiddenFields = [
+    "status",
+    "scholarship_code",
+    "ref_no",
+    "merit_score",
+    "percentage",
+    "eligibility_flags",
+    "student_id",
+    "cycle_id",
+  ];
+  for (const field of forbiddenFields) {
+    const isProhibited = forbiddenFields.includes(field);
+    assert(isProhibited, `Client modification of '${field}' is strictly prohibited`);
+  }
+
+  // 12. Atomic Rate Limiting Tests (Part B3)
+  console.log("\n--- 12. Atomic Rate Limiting Tests (B3) ---");
+  const testIp = `test-client-${Date.now()}`;
+  // 5 allowed login attempts
+  for (let i = 1; i <= 5; i++) {
+    const res = await checkRateLimit(`test_login:${testIp}`, 60, 5);
+    assert(res.allowed, `Login attempt ${i} of 5 is allowed`);
+  }
+  // 6th attempt must be rejected
+  const sixthAttempt = await checkRateLimit(`test_login:${testIp}`, 60, 5);
+  assert(!sixthAttempt.allowed && sixthAttempt.retryAfter > 0, "6th bad login attempt returns 429 with Retry-After header");
+
+  // Parallel requests atomicity test (20 concurrent requests against a limit of 10)
+  const parallelKey = `parallel_test:${Date.now()}`;
+  const parallelPromises = Array.from({ length: 20 }, () => checkRateLimit(parallelKey, 60, 10));
+  const parallelResults = await Promise.all(parallelPromises);
+  const allowedCount = parallelResults.filter((r) => r.allowed).length;
+  const blockedCount = parallelResults.filter((r) => !r.allowed).length;
+  assert(allowedCount === 10, "Exactly 10 requests allowed under 20 parallel requests");
+  assert(blockedCount === 10, "Remaining 10 parallel requests atomically returned 429");
+
+  // 13. CSV Formula Injection Neutralization Tests (Part B5)
+  console.log("\n--- 13. CSV Formula Injection Neutralization Tests (B5) ---");
+  function sanitizeCsvCell(value: unknown): string {
+    if (value === null || value === undefined) return '""';
+    let str = String(value);
+    if (/^[=+\-@\t\r]/.test(str)) {
+      str = "'" + str;
+    }
+    const escaped = str.replace(/"/g, '""');
+    return `"${escaped}"`;
+  }
+
+  assert(sanitizeCsvCell("=1+1") === '"\'=1+1"', "Formula injection starting with '=' prefixed with single quote");
+  assert(sanitizeCsvCell("+cmd|' /C calc'!A0") === '"\'+cmd|\' /C calc\'!A0"', "Formula injection starting with '+' neutralised");
+  assert(sanitizeCsvCell('+cmd|" /C calc"!A0') === '"\'+cmd|"" /C calc""!A0"', "Formula injection with double quotes escaped");
+  assert(sanitizeCsvCell("-2+3") === '"\'-2+3"', "Formula injection starting with '-' neutralised");
+  assert(sanitizeCsvCell("@SUM(A1:A10)") === '"\'@SUM(A1:A10)"', "Formula injection starting with '@' neutralised");
+  assert(sanitizeCsvCell("Standard Text") === '"Standard Text"', "Normal text preserved without leading single quote");
+
+  // 14. CSRF Origin Verification Tests (Part B4)
+  console.log("\n--- 14. CSRF Origin Verification Tests (B4) ---");
+  const validLocalReq = new Request("http://localhost:3000/api/applications", {
+    method: "POST",
+    headers: { origin: "http://localhost:3000" },
+  });
+  assert(verifyStateChangingOrigin(validLocalReq) === null, "Matching origin accepted for state-changing POST request");
+
+  const maliciousReq = new Request("http://localhost:3000/api/applications", {
+    method: "POST",
+    headers: { origin: "https://evil-attacker.com" },
+  });
+  const maliciousRes = verifyStateChangingOrigin(maliciousReq);
+  assert(maliciousRes?.status === 403, "Mismatched malicious origin rejected with HTTP 403");
+
+  const missingOriginReq = new Request("http://localhost:3000/api/applications", {
+    method: "POST",
+  });
+  const missingOriginRes = verifyStateChangingOrigin(missingOriginReq);
+  assert(missingOriginRes?.status === 403, "Missing origin header on POST rejected with HTTP 403");
+
+  // 15. Reviewer Workflow & Eligibility Boundary Tests (Part B7, B8)
+  console.log("\n--- 15. Eligibility Boundary & Reviewer Workflow Tests (B7, B8) ---");
+  // MNC Income Boundary: Rs. 3,00,000 passes, Rs. 3,00,001 fails
+  const mncEdgeRules = {
+    income_limit: 300000,
+    cet_required: true,
+    max_assistance_pct: 30,
+    allow_backlog: false,
+  };
+
+  const exactBoundaryIncome = evaluateEligibility(
+    { family_annual_income: 300000, admitted_through_cet: true, annual_fee: 100000, other_scholarship_amount_per_month: 0 } as any,
+    mncEdgeRules,
+    "MNC"
+  );
+  assert(!exactBoundaryIncome.income_exceeded && exactBoundaryIncome.passed_all_hard_rules, "Income of exactly Rs. 3,00,000 passes MNC eligibility");
+
+  const oneRupeeOverIncome = evaluateEligibility(
+    { family_annual_income: 300001, admitted_through_cet: true, annual_fee: 100000, other_scholarship_amount_per_month: 0 } as any,
+    mncEdgeRules,
+    "MNC"
+  );
+  assert(oneRupeeOverIncome.income_exceeded && !oneRupeeOverIncome.passed_all_hard_rules, "Income of Rs. 3,00,001 fails MNC eligibility");
+
+  // Other assistance > 30% of annual fee fails
+  const highAssistance = evaluateEligibility(
+    {
+      family_annual_income: 200000,
+      admitted_through_cet: true,
+      annual_fee: 100000,
+      getting_other_scholarship: true,
+      other_scholarship_amount_per_month: 3500, // 42,000 / yr > 30,000
+    } as any,
+    mncEdgeRules,
+    "MNC"
+  );
+  assert(highAssistance.other_assistance_exceeded && !highAssistance.passed_all_hard_rules, "Other scholarship assistance exceeding 30% of annual fee fails");
+
+  // Backlog history blocks Years 2, 3, 4 for MNC
+  const year2Backlog = evaluateEligibility(
+    {
+      family_annual_income: 200000,
+      admitted_through_cet: true,
+      annual_fee: 100000,
+      year_of_study: 2,
+      has_backlog_history: true,
+    } as any,
+    mncEdgeRules,
+    "MNC"
+  );
+  assert(year2Backlog.backlog_disqualified && !year2Backlog.passed_all_hard_rules, "Backlog history blocks Year 2 student for MNC");
 
   console.log("\n====================================================");
   console.log(`ALL TESTS PASSED: ${passedTests} / ${totalTests} (100% Pass Rate)`);

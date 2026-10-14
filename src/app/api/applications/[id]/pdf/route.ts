@@ -3,6 +3,7 @@ import { getCurrentSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { generateApplicationPdf } from '@/lib/pdf/generatePdf';
 import { storage } from '@/lib/storage';
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 
 export async function GET(
   request: Request,
@@ -11,6 +12,12 @@ export async function GET(
   const session = await getCurrentSession();
   if (!session) {
     return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
+  }
+
+  // Rate limit: 10 PDF generations per hour per user
+  const rateLimit = await checkRateLimit(`pdf_gen:user:${session.userId}`, 3600, 10);
+  if (!rateLimit.allowed) {
+    return rateLimitResponse(rateLimit.retryAfter);
   }
 
   const { id } = await params;

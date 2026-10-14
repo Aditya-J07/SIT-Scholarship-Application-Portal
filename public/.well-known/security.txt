@@ -1,0 +1,10 @@
+# security.txt - Siddaganga Institute of Technology Scholarship Portal
+# RFC 9116 Vulnerability Disclosure Policy
+
+# TODO: confirm official security contact email with SIT Administration
+Contact: mailto:security-incident-todo@sit.ac.in
+Preferred-Languages: en, kn
+Canonical: https://sit-scholarship-portal.vercel.app/.well-known/security.txt
+Policy: https://sit.ac.in/privacy-policy
+Acknowledgments: https://sit-scholarship-portal.vercel.app/security-acknowledgments
+Expires: 2027-12-31T23:59:59.000Z

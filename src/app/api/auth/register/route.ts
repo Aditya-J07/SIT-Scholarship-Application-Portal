@@ -2,8 +2,22 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { validatePasswordStrength } from "@/lib/auth/password-policy";
 import { db } from "@/lib/db";
+import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
+import { verifyStateChangingOrigin } from "@/lib/auth/origin-guard";
 
 export async function POST(request: Request) {
+  // 1. CSRF Origin Verification
+  const originErr = verifyStateChangingOrigin(request);
+  if (originErr) return originErr;
+
+  const clientIp = getClientIp(request);
+
+  // 2. Atomic Rate Limiting: 5 per hour per IP
+  const rateLimit = await checkRateLimit(`register:ip:${clientIp}`, 3600, 5);
+  if (!rateLimit.allowed) {
+    return rateLimitResponse(rateLimit.retryAfter);
+  }
+
   try {
     const body = await request.json();
     const { full_name, email, mobile, password, consent_accepted } = body;

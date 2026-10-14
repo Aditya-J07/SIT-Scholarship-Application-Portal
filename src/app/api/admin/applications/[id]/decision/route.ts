@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { sendNotification } from '@/lib/notifications';
 import { NotificationType } from '@/lib/notifications';
 import crypto from 'crypto';
+import { verifyStateChangingOrigin } from '@/lib/auth/origin-guard';
 
 const ALLOWED_ACTIONS = new Set([
   'recommendation',
@@ -24,6 +25,10 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // 1. CSRF Origin Verification
+  const originErr = verifyStateChangingOrigin(request);
+  if (originErr) return originErr;
+
   const session = await getCurrentSession();
   if (!session || (session.role !== 'admin' && session.role !== 'reviewer')) {
     return NextResponse.json({ error: { message: 'Unauthorized staff access required' } }, { status: 403 });

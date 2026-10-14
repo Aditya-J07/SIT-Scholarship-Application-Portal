@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { requireAdminSession } from '@/lib/auth/admin-guard';
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { db } from '@/lib/db';
 import JSZip from 'jszip';
 import { storage } from '@/lib/storage';
@@ -25,9 +26,13 @@ function cell(value: unknown): string {
 }
 
 export async function GET(request: Request) {
-  const session = await getCurrentSession();
-  if (!session || session.role !== 'admin') {
-    return NextResponse.json({ error: { message: 'Unauthorized administrator access required' } }, { status: 403 });
+  const { session, errorResponse } = await requireAdminSession({ allowReviewer: false });
+  if (errorResponse) return errorResponse;
+
+  // Rate limit: 10 exports per hour per admin
+  const rateLimit = await checkRateLimit(`export:admin:${session.userId}`, 3600, 10);
+  if (!rateLimit.allowed) {
+    return rateLimitResponse(rateLimit.retryAfter);
   }
 
   const { searchParams } = new URL(request.url);

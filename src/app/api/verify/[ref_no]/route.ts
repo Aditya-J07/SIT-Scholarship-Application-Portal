@@ -1,10 +1,18 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { checkRateLimit, getClientIp, rateLimitResponse } from '@/lib/rate-limit';
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ ref_no: string }> }
 ) {
+  // 1. Rate limiting: 30 requests per minute per IP
+  const clientIp = getClientIp(request);
+  const rateLimit = await checkRateLimit(`verify:ip:${clientIp}`, 60, 30);
+  if (!rateLimit.allowed) {
+    return rateLimitResponse(rateLimit.retryAfter);
+  }
+
   const { ref_no } = await params;
   if (!ref_no) {
     return NextResponse.json({ error: { message: 'Reference number is required' } }, { status: 400 });
@@ -21,12 +29,12 @@ export async function GET(
   const scholarship = await db.findScholarshipByCode(application.data.scholarship_code || 'MNC');
   const cycle = await db.findCycleById(application.cycle_id);
 
-  // Minimal public status check - no personal details (DPDP Act compliance)
+  // Minimal public status check - zero personal details (DPDP Act compliance)
   return NextResponse.json({
     found: true,
     ref_no: application.ref_no,
     scholarship_name: scholarship?.name || application.data.scholarship_code,
-    academic_year: cycle?.academic_year || '2026-2027',
+    academic_year: cycle?.academic_year || 'Academic Year Unspecified',
     status: application.status,
     submitted_at: application.submitted_at,
     has_valid_pdf: Boolean(application.pdf_sha256),

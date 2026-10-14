@@ -597,6 +597,39 @@ export const db = {
     return data as ApplicationFileRecord;
   },
 
+  findFilesByApplicationId: async (applicationId: string): Promise<ApplicationFileRecord[]> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("application_files")
+      .select("*")
+      .eq("application_id", applicationId)
+      .order("uploaded_at", { ascending: true });
+
+    if (error) {
+      console.error("[DB] findFilesByApplicationId error:", error.message);
+      return [];
+    }
+
+    return (data || []) as ApplicationFileRecord[];
+  },
+
+  deleteFileRecord: async (id: string): Promise<boolean> => {
+    const supabase = getAdminClient();
+
+    const { error } = await supabase
+      .from("application_files")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      console.error("[DB] deleteFileRecord error:", error.message);
+      return false;
+    }
+
+    return true;
+  },
+
   // --------------------------------------------------------------------------
   // Remarks
   // --------------------------------------------------------------------------

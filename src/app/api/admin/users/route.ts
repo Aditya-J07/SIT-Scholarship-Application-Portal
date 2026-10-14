@@ -1,17 +1,16 @@
 import { NextResponse } from "next/server";
-import { getCurrentSession } from "@/lib/auth/session";
 import { getAdminClient } from "@/utils/supabase/admin";
 import { db } from "@/lib/db";
 import { validatePasswordStrength } from "@/lib/auth/password-policy";
 import { UserRole } from "@/lib/types";
+import { requireAdminSession } from "@/lib/auth/admin-guard";
+import { verifyStateChangingOrigin } from "@/lib/auth/origin-guard";
 
 const ALLOWED_ROLES = new Set<UserRole>(["student", "reviewer", "admin"]);
 
 export async function GET() {
-  const session = await getCurrentSession();
-  if (!session || session.role !== "admin") {
-    return NextResponse.json({ error: { message: "Unauthorized" } }, { status: 403 });
-  }
+  const { session, errorResponse } = await requireAdminSession({ allowReviewer: false });
+  if (errorResponse) return errorResponse;
 
   const usersList = await db.listUsers();
   const users = usersList.map((u) => ({
@@ -28,13 +27,11 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const session = await getCurrentSession();
-  if (!session || session.role !== "admin") {
-    return NextResponse.json(
-      { error: { message: "Only Admin can create staff accounts" } },
-      { status: 403 }
-    );
-  }
+  const originErr = verifyStateChangingOrigin(request);
+  if (originErr) return originErr;
+
+  const { session, errorResponse } = await requireAdminSession({ allowReviewer: false });
+  if (errorResponse) return errorResponse;
 
   try {
     const body = await request.json();

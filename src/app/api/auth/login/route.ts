@@ -1,8 +1,16 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { db } from "@/lib/db";
+import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
+import { verifyStateChangingOrigin } from "@/lib/auth/origin-guard";
 
 export async function POST(request: Request) {
+  // 1. CSRF Origin Verification
+  const originErr = verifyStateChangingOrigin(request);
+  if (originErr) return originErr;
+
+  const clientIp = getClientIp(request);
+
   try {
     const body = await request.json();
     const { email, password } = body;
@@ -15,7 +23,17 @@ export async function POST(request: Request) {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    const clientIp = request.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
+
+    // 2. Atomic Rate Limiting: 5 per 15 minutes per IP and per Email
+    const ipLimit = await checkRateLimit(`login:ip:${clientIp}`, 900, 5);
+    if (!ipLimit.allowed) {
+      return rateLimitResponse(ipLimit.retryAfter);
+    }
+
+    const emailLimit = await checkRateLimit(`login:email:${normalizedEmail}`, 900, 5);
+    if (!emailLimit.allowed) {
+      return rateLimitResponse(emailLimit.retryAfter);
+    }
 
     const supabase = await createClient();
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({

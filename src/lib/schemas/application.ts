@@ -240,13 +240,13 @@ function refineStep5(data: any, ctx: z.RefinementCtx) {
   }
 }
 
-// Step Schemas
-export const step1Schema = z.object(step1Fields);
-export const step2Schema = z.object(step2Fields);
-export const step3Schema = z.object(step3Fields).superRefine(refineStep3);
-export const step4Schema = z.object(step4Fields).superRefine(refineStep4);
-export const step5Schema = z.object(step5Fields).superRefine(refineStep5);
-export const step7Schema = z.object(step7Fields);
+// Step Schemas (Strict: rejects unknown client keys per H2 / B2)
+export const step1Schema = z.object(step1Fields).strict();
+export const step2Schema = z.object(step2Fields).strict();
+export const step3Schema = z.object(step3Fields).strict().superRefine(refineStep3);
+export const step4Schema = z.object(step4Fields).strict().superRefine(refineStep4);
+export const step5Schema = z.object(step5Fields).strict().superRefine(refineStep5);
+export const step7Schema = z.object(step7Fields).strict();
 
 // Full Application Schema
 export const fullApplicationSchema = z

@@ -3,6 +3,8 @@ import { getCurrentSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { ApplicationFileRecord } from '@/lib/types';
 import { storage } from '@/lib/storage';
+import { checkRateLimit, getClientIp, rateLimitResponse } from '@/lib/rate-limit';
+import { verifyStateChangingOrigin } from '@/lib/auth/origin-guard';
 import crypto from 'crypto';
 
 const ALLOWED_KINDS = new Set([
@@ -21,9 +23,27 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // 1. CSRF Origin Verification
+  const originErr = verifyStateChangingOrigin(request);
+  if (originErr) return originErr;
+
   const session = await getCurrentSession();
   if (!session) {
     return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
+  }
+
+  // 2. Role authorization: Reviewers may NOT upload
+  if (session.role === 'reviewer') {
+    return NextResponse.json(
+      { error: { message: 'Reviewers are not permitted to upload or alter application files.' } },
+      { status: 403 }
+    );
+  }
+
+  // 3. Rate limiting: 30 uploads per hour per user
+  const rateLimit = await checkRateLimit(`upload:user:${session.userId}`, 3600, 30);
+  if (!rateLimit.allowed) {
+    return rateLimitResponse(rateLimit.retryAfter);
   }
 
   const { id: applicationId } = await params;
@@ -32,15 +52,15 @@ export async function POST(
     return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
   }
 
-  // Row Level Security: only the student owner or admin can upload
+  // Ownership check: only owning student or admin can upload
   if (session.role === 'student' && application.student_id !== session.userId) {
     return NextResponse.json({ error: { message: 'Forbidden' } }, { status: 403 });
   }
 
-  // Cannot modify if already submitted unless in 'needs_correction'
+  // Application state check: students cannot modify unless draft or needs_correction
   if (session.role === 'student' && application.status !== 'draft' && application.status !== 'needs_correction') {
     return NextResponse.json(
-      { error: { message: 'Application is locked and cannot be edited after submission' } },
+      { error: { message: 'Application is locked and cannot be edited after submission.' } },
       { status: 400 }
     );
   }
@@ -57,35 +77,66 @@ export async function POST(
       );
     }
 
+    // Path traversal attempt check
+    if (file.name.includes('..') || file.name.includes('/') || file.name.includes('\\')) {
+      return NextResponse.json(
+        { error: { message: 'Invalid file name. Path traversal characters are strictly forbidden.' } },
+        { status: 400 }
+      );
+    }
+
     const sizeBytes = file.size;
 
-    // Strict size limits
-    const maxPhotoSize = 1 * 1024 * 1024; // 1 MB
-    const maxSigSize = 500 * 1024; // 500 KB
+    // Vercel serverless request body safety check (4.5 MB limit)
+    if (sizeBytes > 4.5 * 1024 * 1024) {
+      return NextResponse.json(
+        { error: { message: 'File exceeds maximum platform transmission limit of 4.5 MB.' } },
+        { status: 400 }
+      );
+    }
+
+    // Strict institutional size limits: photo & signatures 1 MB, certificates 3 MB
+    const maxPhotoSigSize = 1 * 1024 * 1024; // 1 MB
     const maxDocSize = 3 * 1024 * 1024; // 3 MB
 
-    if (kind === 'photo' && sizeBytes > maxPhotoSize) {
+    if ((kind === 'photo' || kind === 'sig_student' || kind === 'sig_parent') && sizeBytes > maxPhotoSigSize) {
       return NextResponse.json(
-        { error: { message: 'Passport photograph must be under 1 MB' } },
+        { error: { message: `${kind} file size must not exceed 1 MB.` } },
         { status: 400 }
       );
     }
-    if ((kind === 'sig_student' || kind === 'sig_parent') && sizeBytes > maxSigSize) {
-      return NextResponse.json(
-        { error: { message: 'Signature file size must be under 500 KB' } },
-        { status: 400 }
-      );
-    }
+
     if (sizeBytes > maxDocSize) {
       return NextResponse.json(
-        { error: { message: 'Document size must not exceed 3 MB' } },
+        { error: { message: 'Certificate document size must not exceed 3 MB.' } },
+        { status: 400 }
+      );
+    }
+
+    // Limit of at most 10 files per application
+    const existingFiles = await db.findFilesByApplicationId(application.id);
+    const isReplacing = existingFiles.some((f: ApplicationFileRecord) => f.kind === kind);
+    if (!isReplacing && existingFiles.length >= 10) {
+      return NextResponse.json(
+        { error: { message: 'Maximum limit of 10 uploaded documents per application reached.' } },
         { status: 400 }
       );
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
 
-    // Magic byte sniffing to identify genuine MIME type
+    // Magic byte sniffing to identify genuine MIME type and reject disguised executables/HTML
+    const isExe = buffer.length >= 2 && buffer[0] === 0x4d && buffer[1] === 0x5a; // MZ header
+    const snippet = buffer.slice(0, 100).toString('utf-8').toLowerCase();
+    const isHtml = snippet.includes('<html') || snippet.includes('<!doctype');
+
+    if (isExe || isHtml) {
+      return NextResponse.json(
+        { error: { message: 'Malicious or disguised file format detected. Upload rejected.' } },
+        { status: 400 }
+      );
+    }
+
     const isPdf = buffer.length > 4 && buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46; // %PDF
     const isJpg = buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
     const isPng = buffer.length > 4 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47; // .PNG
@@ -93,15 +144,15 @@ export async function POST(
 
     if (!isPdf && !isJpg && !isPng && !isWebp) {
       return NextResponse.json(
-        { error: { message: 'File rejected. Only valid PDF, JPEG, PNG, and WEBP formats are accepted.' } },
+        { error: { message: 'File rejected. Only authentic PDF, JPEG, PNG, or WEBP formats are accepted.' } },
         { status: 400 }
       );
     }
 
-    // Photo and signatures MUST be images, never PDF
+    // Photo and signatures MUST be PNG, JPEG, or WebP (reject PDF)
     if ((kind === 'photo' || kind === 'sig_student' || kind === 'sig_parent') && isPdf) {
       return NextResponse.json(
-        { error: { message: 'Photographs and signatures must be images (JPG/PNG/WEBP), not PDF documents.' } },
+        { error: { message: 'Photographs and signatures must be image formats (PNG/JPEG/WEBP), not PDF documents.' } },
         { status: 400 }
       );
     }
@@ -122,13 +173,21 @@ export async function POST(
       ext = 'jpg';
     }
 
+    // If replacing an existing file of the same kind, delete the previous storage object
+    const previousFile = existingFiles.find((f: ApplicationFileRecord) => f.kind === kind);
+    if (previousFile) {
+      await storage.deleteFile(previousFile.storage_path);
+      await db.deleteFileRecord(previousFile.id);
+    }
+
     const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
     const safeFileId = crypto.randomUUID();
+    // Secure server-generated storage path (never uses user input)
     const storagePath = `${application.id}/${kind}-${safeFileId}.${ext}`;
 
     await storage.saveFile(storagePath, buffer, detectedMime);
 
-    // Sanitize original filename (remove path traversal attempts and control chars)
+    // Sanitize original filename for display
     const sanitizedName = file.name
       .replace(/[^\w.-]/g, '_')
       .replace(/\.\.+/g, '.')
@@ -148,7 +207,7 @@ export async function POST(
 
     await db.saveFileRecord(fileRecord);
 
-    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+    const clientIp = getClientIp(request);
     await db.logAudit({
       actor_id: session.userId,
       actor_email: session.email,
@@ -176,40 +235,10 @@ export async function POST(
       },
     });
   } catch (error: unknown) {
-    console.error('File upload failed:', error);
-    return NextResponse.json({ error: { message: 'Failed to process file upload' } }, { status: 500 });
+    console.error('File upload error:', error);
+    return NextResponse.json(
+      { error: { message: 'An unexpected error occurred during file upload.' } },
+      { status: 500 }
+    );
   }
-}
-
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
-  }
-
-  const { id: applicationId } = await params;
-  const application = await db.findApplicationById(applicationId);
-  if (!application) {
-    return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
-  }
-
-  if (session.role === 'student' && application.student_id !== session.userId) {
-    return NextResponse.json({ error: { message: 'Forbidden' } }, { status: 403 });
-  }
-
-  const fileRecords = await db.listFilesForApplication(applicationId);
-  const files = fileRecords.map((f) => ({
-    id: f.id,
-    kind: f.kind,
-    original_name: f.original_name,
-    size_bytes: f.size_bytes,
-    mime: f.mime,
-    uploaded_at: f.uploaded_at,
-    url: `/api/files/${f.id}`,
-  }));
-
-  return NextResponse.json({ files });
 }

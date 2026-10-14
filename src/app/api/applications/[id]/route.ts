@@ -5,6 +5,7 @@ import { calculateMeritScore, calculatePercentage } from '@/lib/merit';
 import { evaluateEligibility } from '@/lib/eligibility';
 import { step1Schema, step2Schema, step3Schema, step4Schema, step5Schema } from '@/lib/schemas/application';
 import { maskBankAccount } from '@/lib/crypto/encryption';
+import { verifyStateChangingOrigin } from '@/lib/auth/origin-guard';
 
 export async function GET(
   request: Request,
@@ -77,6 +78,10 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // 1. CSRF Origin Verification
+  const originErr = verifyStateChangingOrigin(request);
+  if (originErr) return originErr;
+
   const session = await getCurrentSession();
   if (!session) {
     return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
@@ -102,6 +107,27 @@ export async function PATCH(
   try {
     const body = await request.json();
     const { step, stepData, last_updated_at } = body;
+
+    // Reject client manipulation of forbidden server-computed / structural fields
+    const FORBIDDEN_CLIENT_KEYS = [
+      'scholarship_code',
+      'status',
+      'ref_no',
+      'merit_score',
+      'percentage',
+      'eligibility_flags',
+      'student_id',
+      'cycle_id',
+    ];
+
+    for (const key of FORBIDDEN_CLIENT_KEYS) {
+      if (key in body || (stepData && typeof stepData === 'object' && key in stepData)) {
+        return NextResponse.json(
+          { error: { message: `Modification of '${key}' is prohibited from client payload.` } },
+          { status: 400 }
+        );
+      }
+    }
 
     // Concurrency conflict check: prevent silent overwrite if updated in another tab
     if (last_updated_at && application.updated_at) {
