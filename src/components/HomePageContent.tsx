@@ -177,19 +177,6 @@ export default function HomePageContent({ scholarships, cycles }: HomePageConten
         </div>
       </div>
 
-      {/* Staff Login Fast Action Box */}
-      <div className="border border-gray-300 bg-[#EEF1F6] p-4 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <span className="font-bold text-[#AC3D47]">{t.admin_banner_title} </span>
-          <span>{t.admin_banner_desc}</span>
-        </div>
-        <Link
-          href="/login"
-          className="gov-btn gov-btn-outline text-xs whitespace-nowrap bg-white py-1 px-3 min-h-[36px]"
-        >
-          {t.admin_login_btn}
-        </Link>
-      </div>
     </div>
   );
 }

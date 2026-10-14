@@ -1,6 +1,7 @@
 -- ==============================================================================
 -- SIDDAGANGA INSTITUTE OF TECHNOLOGY (SIT), TUMAKURU - 572103
 -- SCHOLARSHIP APPLICATION PORTAL - PRODUCTION POSTGRESQL SCHEMA
+-- Migration: 001_init.sql / schema.sql
 -- Region: ap-south-1 (Mumbai, India) - Required for DPDP Act Compliance
 -- ==============================================================================
 
@@ -9,23 +10,18 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ------------------------------------------------------------------------------
--- 1. PROFILES TABLE (Students, Evaluators/Reviewers, and Administrators)
+-- 1. PROFILES TABLE (Linked directly to Supabase Auth auth.users)
 -- ------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.profiles (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     role TEXT NOT NULL CHECK (role IN ('student', 'reviewer', 'admin')) DEFAULT 'student',
     full_name TEXT NOT NULL,
     mobile TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
-    password_hash TEXT,
     must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
-    email_verified BOOLEAN NOT NULL DEFAULT FALSE,
-    token_version INTEGER NOT NULL DEFAULT 1,
-    two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-    two_factor_secret TEXT,
-    two_factor_recovery_codes TEXT[],
     bank_account_holder TEXT,
-    bank_acc_no_encrypted TEXT, -- Encrypted with AES-256-GCM (v1:iv:authTag:cipher)
+    bank_acc_no_encrypted TEXT, -- AES-256-GCM encrypted (v1:keyId:iv:tag:cipher)
+    bank_acc_last4 TEXT,        -- Plain last 4 digits for masked display
     bank_name TEXT,
     bank_branch TEXT,
     bank_ifsc TEXT,
@@ -64,6 +60,9 @@ CREATE TABLE IF NOT EXISTS public.cycles (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE INDEX IF NOT EXISTS idx_cycles_scholarship ON public.cycles(scholarship_id);
+CREATE INDEX IF NOT EXISTS idx_cycles_status ON public.cycles(status);
+
 -- ------------------------------------------------------------------------------
 -- 4. APPLICATIONS TABLE
 -- ------------------------------------------------------------------------------
@@ -99,16 +98,21 @@ CREATE INDEX IF NOT EXISTS idx_applications_student_id ON public.applications(st
 CREATE INDEX IF NOT EXISTS idx_applications_ref_no ON public.applications(ref_no);
 CREATE INDEX IF NOT EXISTS idx_applications_updated_at ON public.applications(updated_at);
 
--- Database-level check trigger to reject submissions after cycle closes
+-- Database-level check trigger to reject submissions before opens_at or after closes_at
 CREATE OR REPLACE FUNCTION check_application_submission_deadline()
 RETURNS trigger AS $$
 DECLARE
-    cycle_closes_at TIMESTAMPTZ;
+    cycle_row RECORD;
 BEGIN
     IF NEW.status = 'submitted' AND (OLD.status IS NULL OR OLD.status != 'submitted') THEN
-        SELECT closes_at INTO cycle_closes_at FROM public.cycles WHERE id = NEW.cycle_id;
-        IF cycle_closes_at IS NOT NULL AND now() > cycle_closes_at THEN
-            RAISE EXCEPTION 'Application deadline has passed. Cycle closed at %', cycle_closes_at;
+        SELECT opens_at, closes_at INTO cycle_row FROM public.cycles WHERE id = NEW.cycle_id;
+        IF cycle_row IS NOT NULL THEN
+            IF now() < cycle_row.opens_at THEN
+                RAISE EXCEPTION 'Application submission window has not opened yet. Cycle opens at %', cycle_row.opens_at;
+            END IF;
+            IF now() > cycle_row.closes_at THEN
+                RAISE EXCEPTION 'Application deadline has passed. Cycle closed at %', cycle_row.closes_at;
+            END IF;
         END IF;
     END IF;
     RETURN NEW;
@@ -121,7 +125,7 @@ BEFORE INSERT OR UPDATE ON public.applications
 FOR EACH ROW EXECUTE FUNCTION check_application_submission_deadline();
 
 -- ------------------------------------------------------------------------------
--- 5. APPLICATION FILES (Stored in private 'application-files' bucket)
+-- 5. APPLICATION FILES (Metadata for files in private 'application-files' bucket)
 -- ------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.application_files (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -186,8 +190,8 @@ CREATE TRIGGER trg_audit_log_immutable
 BEFORE UPDATE OR DELETE ON public.audit_log
 FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_tamper();
 
--- Revoke UPDATE and DELETE privileges on audit_log
-REVOKE UPDATE, DELETE ON public.audit_log FROM anon, authenticated, service_role;
+-- Revoke UPDATE, DELETE, TRUNCATE on audit_log from application roles
+REVOKE UPDATE, DELETE, TRUNCATE ON public.audit_log FROM anon, authenticated;
 
 -- ------------------------------------------------------------------------------
 -- 8. DISTRIBUTED RATE LIMITS (Atomic rate limiting for serverless execution)
@@ -201,28 +205,100 @@ CREATE TABLE IF NOT EXISTS public.rate_limits (
 CREATE INDEX IF NOT EXISTS idx_rate_limits_expire_at ON public.rate_limits(expire_at);
 
 -- ------------------------------------------------------------------------------
--- 9. PASSWORD RESETS & EMAIL VERIFICATION TOKENS
+-- 9. ROW LEVEL SECURITY (RLS) POLICIES
 -- ------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS public.password_resets (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-    token_hash TEXT NOT NULL UNIQUE,
-    expires_at TIMESTAMPTZ NOT NULL,
-    used BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.scholarships ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cycles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.applications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.application_files ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.remarks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.rate_limits ENABLE ROW LEVEL SECURITY;
 
-CREATE TABLE IF NOT EXISTS public.email_verifications (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-    token_hash TEXT NOT NULL UNIQUE,
-    expires_at TIMESTAMPTZ NOT NULL,
-    used BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+-- Profiles policies
+CREATE POLICY "Users can view their own profile"
+    ON public.profiles FOR SELECT
+    TO authenticated
+    USING (auth.uid() = id);
+
+CREATE POLICY "Users can update their own non-role profile fields"
+    ON public.profiles FOR UPDATE
+    TO authenticated
+    USING (auth.uid() = id)
+    WITH CHECK (auth.uid() = id);
+
+-- Scholarships policies (publicly viewable active scholarships)
+CREATE POLICY "Anyone can view active scholarships"
+    ON public.scholarships FOR SELECT
+    TO anon, authenticated
+    USING (active = true);
+
+-- Cycles policies (publicly viewable cycles)
+CREATE POLICY "Anyone can view academic cycles"
+    ON public.cycles FOR SELECT
+    TO anon, authenticated
+    USING (true);
+
+-- Applications policies
+CREATE POLICY "Students can view their own applications"
+    ON public.applications FOR SELECT
+    TO authenticated
+    USING (auth.uid() = student_id);
+
+CREATE POLICY "Students can create applications for themselves"
+    ON public.applications FOR INSERT
+    TO authenticated
+    WITH CHECK (auth.uid() = student_id);
+
+CREATE POLICY "Students can update their own draft applications"
+    ON public.applications FOR UPDATE
+    TO authenticated
+    USING (auth.uid() = student_id)
+    WITH CHECK (auth.uid() = student_id);
+
+-- Application files policies
+CREATE POLICY "Students can view their own application files"
+    ON public.application_files FOR SELECT
+    TO authenticated
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.applications a
+            WHERE a.id = application_files.application_id AND a.student_id = auth.uid()
+        )
+    );
+
+CREATE POLICY "Students can upload their own application files"
+    ON public.application_files FOR INSERT
+    TO authenticated
+    WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM public.applications a
+            WHERE a.id = application_files.application_id AND a.student_id = auth.uid()
+        )
+    );
+
+-- Remarks policies
+CREATE POLICY "Students can view published correction requests and decisions"
+    ON public.remarks FOR SELECT
+    TO authenticated
+    USING (
+        kind IN ('correction_request', 'decision') AND
+        EXISTS (
+            SELECT 1 FROM public.applications a
+            WHERE a.id = remarks.application_id AND a.student_id = auth.uid()
+        )
+    );
 
 -- ------------------------------------------------------------------------------
--- 10. SEED DATA (Official Scholarships & Open Cycle)
+-- 10. PRIVATE STORAGE BUCKET
+-- ------------------------------------------------------------------------------
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('application-files', 'application-files', false)
+ON CONFLICT (id) DO UPDATE SET public = false;
+
+-- ------------------------------------------------------------------------------
+-- 11. INITIAL SEED DATA
 -- ------------------------------------------------------------------------------
 INSERT INTO public.scholarships (id, code, name, active, fee_label, rules, requires_recommendation, description)
 VALUES 
@@ -272,7 +348,7 @@ ON CONFLICT (code) DO UPDATE SET
     description = EXCLUDED.description;
 
 -- Active Academic Cycle
--- TODO [COLLEGE DECISION REQUIRED]: Confirm circular dates for Academic Year 2026-2027
+-- TODO [COLLEGE DECISION REQUIRED]: Confirm exact opening date and closing date with Accounts Section
 INSERT INTO public.cycles (id, scholarship_id, academic_year, opens_at, closes_at, status)
 VALUES 
 (
@@ -280,7 +356,7 @@ VALUES
     'sch_mnc',
     '2026-2027',
     '2026-09-01T00:00:00Z', -- TODO: Confirm official notification date
-    '2026-12-31T23:59:59Z', -- TODO: Confirm official last submission date
+    '2026-12-31T23:59:59Z', -- TODO: Confirm official last submission date with Accounts Section
     'open'
 ),
 (

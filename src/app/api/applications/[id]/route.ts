@@ -203,16 +203,27 @@ export async function PATCH(
       scholarship?.code || 'MNC'
     );
 
-    const updated = await db.updateApplication(id, {
-      data: mergedData,
-      current_step: step,
-      merit_score,
-      computed: {
-        percentage: mergedData.percentage || 0,
+    const updated = await db.updateApplication(
+      id,
+      {
+        data: mergedData,
+        current_step: step,
         merit_score,
-        eligibility_flags,
+        computed: {
+          percentage: mergedData.percentage || 0,
+          merit_score,
+          eligibility_flags,
+        },
       },
-    });
+      last_updated_at
+    );
+
+    if (!updated) {
+      return NextResponse.json(
+        { error: { message: 'Draft conflict: This application was updated elsewhere. Please refresh to load the latest data.' } },
+        { status: 409 }
+      );
+    }
 
     return NextResponse.json({
       success: true,

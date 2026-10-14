@@ -2,6 +2,8 @@ import { notFound } from 'next/navigation';
 import { db } from '@/lib/db';
 import ScholarshipDetailContent from '@/components/ScholarshipDetailContent';
 
+export const dynamic = 'force-dynamic';
+
 export default async function ScholarshipDetailPage({
   params,
 }: {

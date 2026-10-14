@@ -6,7 +6,7 @@
 
 ## 1. Overview
 
-The **SIT Scholarship Application Portal** is an official, fast, minimal, government-style web platform designed to eliminate paper handwriting on scholarship forms and automate eligibility verification, merit ranking, document archiving, and PDF generation.
+The **SIT Scholarship Application Portal** (`sit-scholarship-portal`) is the official, fast, minimal, government-style web platform for Siddaganga Institute of Technology, Tumakuru. It automates scholarship applications, eligibility verification, merit ranking, document archiving, and print-ready PDF generation while strictly safeguarding student privacy in compliance with the Digital Personal Data Protection (DPDP) Act 2023.
 
 ### Supported Scholarships
 1. **`MNC`**: *Dr. M.N. Channabasappa Endowment Fund Loan Scholarship*
@@ -19,126 +19,138 @@ The **SIT Scholarship Application Portal** is an official, fast, minimal, govern
    - Uses *"Tuition fee"* reference.
    - Includes official Proctor and Head of the Department (HoD) recommendation verification block.
 3. **`SITEB`**: *SIT Scholarship to Economically Backward and Socially Challenged Students*
-   - Configured in the data model and marked **inactive** pending official committee form circular.
+   - Configured in the data model and marked **inactive** pending official committee circular.
 
 ---
 
-## 2. Key Features
+## 2. Key Architecture & Security Controls
 
-- **Government-Style Aesthetic:** Minimalist light-only UI adhering to institutional standards with a tri-color header ribbon (`#FF9933`, `#FFFFFF`, `#138808`), official SIT brand maroon (`rgb(172, 61, 71)` / `#AC3D47`), and grey section bars (`#EEF1F6`). Square corners, 1px borders, base 16px font, WCAG 2.1 AA accessible, and mobile responsive (360px+).
-- **Multi-Step Form Wizard:** Progress tracker, auto-save as draft, maximum ~6 fields per screen, auto-uppercasing, and field normalization.
-- **Instant IFSC Auto-Lookup:** Auto-fills bank name, branch address, and city using IFSC lookup with manual entry fallback.
-- **Live Eligibility Feedback Panel:** Real-time feedback identifying hard rule blocking failures vs. advisory warnings before submission.
-- **Server-Side Official PDF Generator:** Produces print-ready A4 PDFs matching the exact layout of the official college form from the docx specification, including photo, signatures, certification line, and a verification QR code.
-- **Public QR Code Verification:** Public endpoint `/verify/[ref_no]` allowing college staff to verify physical printouts without exposing sensitive student personal data (DPDP Act 2023 compliant).
-- **Admin & Scrutiny Portal:**
-  - Overview dashboard with submission counts and cycle statuses.
-  - Candidate table with server-side filtering, sorting (merit score, income, date), search, and flag chips (e.g. *Income > 3L*, *Backlog*, *Hard Copy Received*).
-  - Merit Ranking and Top 10 Selection Helper for MNC Endowment interviews and committee tie-breaks.
-  - Reviewer workflow (HoD/Proctor recommendation) and Admin decision buttons (Accept, Reject with mandatory reason, Request Correction, Shortlist).
-  - Bulk actions: Export CSV reports and ZIP archive of all generated PDFs.
-  - Dynamic scholarship rules, income limits, and application window cycles editor.
-  - Immutable chronological audit trail.
+- **Authentication:** Powered by Supabase Auth (`@supabase/ssr` + `@supabase/supabase-js`). Session tokens are stored in secure HTTP-only cookies and refreshed via Next.js 16 request proxy (`src/proxy.ts`).
+- **Database-Controlled Authorization:** User roles (`student`, `reviewer`, `admin`) reside exclusively in PostgreSQL `public.profiles.role`. Roles are never stored in or read from JWT metadata or client cookies.
+- **PostgreSQL Row Level Security (RLS):** All tables have RLS enabled with access control policies.
+- **Append-Only Immutable Audit Log:** Trigger `trg_audit_log_immutable` raises an exception on any `UPDATE` or `DELETE`, and privileges are revoked from application roles.
+- **Database-Level Deadline Check:** Trigger `trg_check_application_submission_deadline` rejects status changes to `submitted` outside active cycle windows (`opens_at` to `closes_at`).
+- **Idempotent Submission & Concurrency Checks:** Draft saves check client `updated_at` timestamps (returning `409` on concurrent edit conflict). Submissions are conditional updates on `status IN ('draft', 'needs_correction')`.
+- **Field-Level Bank Account Encryption:** Student bank numbers are encrypted using **AES-256-GCM** (`v1:keyId:iv:tag:ciphertext`) via 32-byte base64 `ENCRYPTION_KEY`. Only the last 4 digits (`bank_acc_last4`) are stored unencrypted for masked display. Supports key rotation with `ENCRYPTION_KEY_PREVIOUS` and `scripts/rotate-encryption-key.ts`.
+- **Private Cloud Storage:** Application enclosures and generated PDFs are stored in private Supabase Storage bucket `application-files` (`public = false`). Files are served strictly through authenticated, role-checked route `/api/files/[id]`.
+- **Unlisted Staff Route:** The public "Administrator Login" link has been removed from the homepage. Staff authenticate via the unlisted `/admin-login` route.
 
 ---
 
-## 3. Account Access & Initial Setup
+## 3. Set Up a New Supabase Project (Checklist)
 
-No hardcoded default accounts or static passwords exist in this codebase.
+Follow this step-by-step checklist to configure a new Supabase project for the portal:
 
-### Bootstrapping the Initial Administrator
-Run the bootstrap script locally or in production deployment:
+### 1. Create Supabase Project
+- Log in to [Supabase Dashboard](https://supabase.com).
+- Click **New Project**.
+- Select Region: **`ap-south-1` (Mumbai, India)** — required for DPDP Act data residency compliance.
+- Note your Project URL, Publishable Key, and Secret Key (Service Role Key).
+
+### 2. Configure Authentication
+- In Supabase Dashboard, go to **Authentication → URL Configuration**:
+  - **Site URL:** Set to your production Vercel domain (e.g. `https://<your-project>.vercel.app`).
+  - **Redirect URLs:** Add `http://localhost:3000` (for local development) and `https://<your-project>.vercel.app/**`.
+- In **Authentication → Providers → Email**:
+  - Turn **Confirm email** ON (required before student login or submission).
+
+### 3. Run Database Migration
+- Open **SQL Editor** in the Supabase Dashboard.
+- Copy and run the contents of [`supabase/migrations/001_init.sql`](supabase/migrations/001_init.sql).
+- This creates:
+  - `profiles` table linked to `auth.users(id) ON DELETE CASCADE`
+  - `scholarships`, `cycles`, `applications`, `application_files`, `remarks`, `audit_log`, `rate_limits`
+  - RLS policies on all tables
+  - Append-only immutable audit log trigger
+  - Submission deadline check trigger
+  - Private storage bucket `application-files`
+
+### 4. Seed Initial Data
+- Populate `.env.local` with your Supabase credentials (see section below).
+- Run the seed script to initialize scholarships, active cycle, and ensure bucket configuration:
+  ```bash
+  npx tsx scripts/seed.ts
+  ```
+
+### 5. Bootstrap Initial Administrator
+- Run the bootstrap script with your desired admin credentials:
+  ```bash
+  ADMIN_EMAIL="<admin-email>" ADMIN_PASSWORD="<SecurePassword10+Chars>" npx tsx scripts/create-admin.ts
+  ```
+- The bootstrap script enforces the institutional password policy, creates the confirmed admin user in Supabase Auth, and marks `must_change_password = true`.
+- Upon initial login at `/admin-login`, the portal will require an immediate password change at `/change-password`.
+
+---
+
+## 4. Environment Variables
+
+Create `.env.local` in the project root based on `.env.example`:
+
+| Name | Scope | Description |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Browser & Server | Supabase Project URL (`https://<project-ref>.supabase.co`) |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Browser & Server | Supabase Publishable Key (replaces old anon key) |
+| `SUPABASE_SECRET_KEY` | Server Only | Supabase Secret Key (bypasses RLS for server data layer) |
+| `ENCRYPTION_KEY` | Server Only | 32 random bytes, base64 encoded, for AES-256-GCM bank field encryption |
+| `ENCRYPTION_KEY_PREVIOUS` | Server Only | (Optional) Previous 32-byte base64 key during key rotation |
+| `NEXT_PUBLIC_APP_URL` | Browser & Server | Base URL of deployment (e.g. `http://localhost:3000` or production URL) |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | CLI Only | Required only when running `scripts/create-admin.ts` |
+| `TEST_SUPABASE_URL` | Test Only | Separate test Supabase project URL (must NOT equal production URL) |
+| `TEST_SUPABASE_SECRET_KEY` | Test Only | Separate test Supabase secret key |
+
+Generate a 32-byte base64 encryption key using Node.js:
 ```bash
-ADMIN_EMAIL="admin@sit.ac.in" ADMIN_PASSWORD="<YourSecurePassword10+Chars>" npx tsx scripts/create-admin.ts
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
-The bootstrap utility:
-1. Enforces the institutional password policy (minimum 10 characters, uppercase, lowercase, numbers, symbols, blocklist check).
-2. Hashes credentials with `crypto.scrypt` (N=16384, r=8, p=1) using a per-user cryptographically random salt.
-3. Automatically sets `must_change_password = true`.
-4. Forces the administrator to update their password at `/change-password` upon first login.
-
-### Student Self-Registration
-Students create accounts directly via the public `/register` portal with DPDP Act 2023 consent acknowledgement.
 
 ---
 
-## 4. Tech Stack
-
-- **Framework:** Next.js (App Router) + TypeScript
-- **Styling:** Vanilla Tailwind CSS (Institutional government palette)
-- **Validation:** Zod schemas shared between browser and server
-- **Forms & Signatures:** HTML5 Canvas SignaturePad + image upload fallback
-- **PDF Generation:** Server-side `pdf-lib` + `qrcode`
-- **Database & Storage:** Atomic file-persisted repository in `.data/` + complete PostgreSQL RLS schema in `supabase/schema.sql`
-
----
-
-## 5. Getting Started & Local Development
-
-### Prerequisites
-- Node.js v20+ or v24+
-- npm v10+
-
-### Installation & Running
+## 5. Development & Testing
 
 ```bash
 # 1. Install dependencies
 npm install
 
-# 2. Run unit and integration tests (27/27 automated checks)
+# 2. Run automated test suite (includes safety collision guards)
 npm test
 
-# 3. Build production bundle
+# 3. Run linter
+npm run lint
+
+# 4. Build production bundle
 npm run build
 
-# 4. Start production server
-npm start
+# 5. Start development server
+npm run dev
 ```
 
-The portal will be active at: **`http://localhost:3000`**
+The portal runs at **`http://localhost:3000`**.
 
 ---
 
 ## 6. Route Sitemap
 
 ### Public Routes
-- `/`: Home page (announcements, scholarship list, deadlines, apply buttons)
-- `/scholarships/[code]`: Detailed guidelines and rules for specific scholarships (`MNC`, `SSKA`)
-- `/login`: Student and staff authentication
-- `/register`: Student registration with DPDP Act 2023 consent checkbox
-- `/forgot-password`: Official password assistance instructions
+- `/`: Home page (announcements, active scholarship list, deadlines, apply actions)
+- `/scholarships/[code]`: Guidelines and eligibility criteria for scholarships (`MNC`, `SSKA`)
+- `/login`: Student authentication portal
+- `/admin-login`: Unlisted staff and administrator authentication portal
+- `/register`: Student self-registration with DPDP Act consent
+- `/forgot-password`: Password reset request portal
+- `/change-password`: Enforced password change portal
 - `/verify/[ref_no]`: Public QR code verification endpoint
 
-### Student Portal (Login Required)
-- `/dashboard`: Applications overview, statuses, draft resumption, and PDF downloads
-- `/apply/[code]`: 7-Step form wizard with live eligibility checker and auto-save
-- `/applications/[id]`: Application detail view, status timeline, PDF viewer, remarks thread, and withdrawal
-- `/profile`: Reusable profile and savings bank details for multi-year pre-filling
+### Student Portal (Authentication Required)
+- `/dashboard`: Applications overview, draft resumption, and PDF downloads
+- `/apply/[code]`: Multi-step form wizard with live eligibility checker and auto-save
+- `/applications/[id]`: Application detail view, status timeline, PDF viewer, remarks thread, withdrawal
+- `/profile`: Reusable profile and bank account details
 
-### Admin & Scrutiny Portal (Role Required)
-- `/admin`: Overview metrics, status counts, recent candidate submissions
-- `/admin/applications`: Applications scrutiny table with filters, search, and CSV/ZIP exports
-- `/admin/applications/[id]`: Full candidate detail view, document previews, PDF preview, and decision actions
-- `/admin/merit`: Merit ranking and Top 10 interview selection helper by year of study
-- `/admin/scholarships`: Scholarship parameters, rules (JSON), and cycle windows editor
-- `/admin/users`: Reviewer and Administrator account management
+### Administrative Portal (Role Required)
+- `/admin`: Metrics dashboard, status counts, recent candidate submissions
+- `/admin/applications`: Scrutiny table with filters, search, and CSV/ZIP exports
+- `/admin/applications/[id]`: Candidate detail view, document previews, PDF preview, decision actions
+- `/admin/merit`: Merit ranking and Top 10 interview helper by academic year
+- `/admin/scholarships`: Scholarship rules and cycle windows editor
+- `/admin/users`: Reviewer and Administrator account management (invite only)
 - `/admin/audit`: Immutable compliance audit trail
-
----
-
-## 7. Cloud Deployment (Supabase & Vercel)
-
-1. **Database:** Execute `supabase/migrations/001_init.sql` inside the Supabase SQL Editor (Region: **`ap-south-1` (Mumbai, India)** for statutory DPDP Act compliance). This creates the tables, append-only immutable audit log trigger, submission deadline check trigger, and seeded scholarships.
-2. **Private Storage:** Create a private bucket named **`application-files`** in Supabase Storage with public access disabled.
-3. **Environment Variables:**
-   ```env
-   NODE_ENV=production
-   NEXT_PUBLIC_APP_URL=https://sitscholarship.vercel.app
-   JWT_SECRET=<random-cryptographic-secret-minimum-32-chars>
-   ENCRYPTION_KEY=<random-32-byte-hex-string-for-aes-256-gcm>
-   NEXT_PUBLIC_SUPABASE_URL=https://<your-project>.supabase.co
-   NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-anon-or-publishable-key>
-   SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key-server-only>
-   ```
-4. **Deploy:** Deploy directly to Vercel (recommended region: Mumbai `bom1`).
-5. **Bootstrap Admin:** Run `ADMIN_EMAIL="admin@sit.ac.in" ADMIN_PASSWORD="..." npx tsx scripts/create-admin.ts` to create the initial admin user.

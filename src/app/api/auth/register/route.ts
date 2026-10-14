@@ -1,10 +1,8 @@
-import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { hashPassword, validatePasswordStrength } from '@/lib/auth/password';
-import { setSessionCookie } from '@/lib/auth/session';
-import { UserProfile } from '@/lib/types';
-import { sendNotification } from '@/lib/notifications';
-import crypto from 'crypto';
+import { NextResponse } from "next/server";
+import { createClient } from "@/utils/supabase/server";
+import { getAdminClient } from "@/utils/supabase/admin";
+import { validatePasswordStrength } from "@/lib/auth/password-policy";
+import { db } from "@/lib/db";
 
 export async function POST(request: Request) {
   try {
@@ -13,14 +11,14 @@ export async function POST(request: Request) {
 
     if (!full_name || !email || !mobile || !password) {
       return NextResponse.json(
-        { error: { message: 'All fields (Name, Email, Mobile, Password) are required' } },
+        { error: { message: "All fields (Name, Email, Mobile, Password) are required" } },
         { status: 400 }
       );
     }
 
     if (!consent_accepted) {
       return NextResponse.json(
-        { error: { message: 'You must review and accept the DPDP Privacy Consent before registering' } },
+        { error: { message: "You must review and accept the DPDP Privacy Consent before registering" } },
         { status: 400 }
       );
     }
@@ -42,73 +40,66 @@ export async function POST(request: Request) {
     // Validate mobile (10 digits starting with 6-9)
     if (!/^[6-9]\d{9}$/.test(mobile.trim())) {
       return NextResponse.json(
-        { error: { message: 'Enter a valid 10-digit mobile number starting with 6, 7, 8, or 9' } },
+        { error: { message: "Enter a valid 10-digit mobile number starting with 6, 7, 8, or 9" } },
         { status: 400 }
       );
     }
 
-    const existing = await db.findUserByEmail(normalizedEmail);
-    if (existing) {
-      return NextResponse.json(
-        { error: { message: 'An account with this email already exists. Please log in.' } },
-        { status: 409 }
-      );
+    const supabase = await createClient();
+    const { data: authData, error: signUpError } = await supabase.auth.signUp({
+      email: normalizedEmail,
+      password,
+    });
+
+    // To prevent email enumeration: if error occurs (e.g. email exists), return the generic response
+    if (signUpError) {
+      console.warn("[Register] signUp message:", signUpError.message);
+      return NextResponse.json({
+        success: true,
+        message:
+          "If this email can be registered, a verification message has been sent. Please check your inbox.",
+      });
     }
 
-    const password_hash = hashPassword(password);
-    const newProfile: UserProfile = {
-      id: crypto.randomUUID(),
-      role: 'student',
-      full_name: full_name.trim().toUpperCase(),
-      mobile: mobile.trim(),
-      email: normalizedEmail,
-      password_hash,
-      must_change_password: false,
-      email_verified: false,
-      token_version: 1,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
+    if (authData.user?.id) {
+      // Store student's name and mobile in the profiles table (not in user_metadata).
+      // Public signup creates students only.
+      const admin = getAdminClient();
+      await admin.from("profiles").upsert({
+        id: authData.user.id,
+        role: "student",
+        full_name: full_name.trim().toUpperCase(),
+        mobile: mobile.trim(),
+        email: normalizedEmail,
+        must_change_password: false,
+      });
 
-    await db.createUser(newProfile);
-
-    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
-
-    // Audit log
-    await db.logAudit({
-      actor_id: newProfile.id,
-      actor_email: newProfile.email,
-      action: 'USER_REGISTERED',
-      entity: 'profiles',
-      entity_id: newProfile.id,
-      meta: { role: 'student' },
-      ip: clientIp,
-    });
-
-    // Send welcome notification
-    await sendNotification({
-      toEmail: newProfile.email,
-      toMobile: newProfile.mobile,
-      studentName: newProfile.full_name,
-      type: 'WELCOME_STUDENT',
-    });
-
-    await setSessionCookie(newProfile);
+      const clientIp = request.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
+      await db.logAudit({
+        actor_id: authData.user.id,
+        actor_email: normalizedEmail,
+        action: "USER_REGISTERED",
+        entity: "profiles",
+        entity_id: authData.user.id,
+        meta: { role: "student" },
+        ip: clientIp,
+      });
+    }
 
     return NextResponse.json({
       success: true,
+      message:
+        "If this email can be registered, a verification message has been sent. Please check your inbox.",
       user: {
-        id: newProfile.id,
-        email: newProfile.email,
-        fullName: newProfile.full_name,
-        role: newProfile.role,
-        mobile: newProfile.mobile,
+        id: authData.user?.id,
+        email: normalizedEmail,
+        role: "student",
       },
     });
   } catch (error: unknown) {
-    console.error('Registration error:', error);
+    console.error("Registration error:", error);
     return NextResponse.json(
-      { error: { message: 'An unexpected server error occurred during registration' } },
+      { error: { message: "An unexpected error occurred during registration. Please try again." } },
       { status: 500 }
     );
   }

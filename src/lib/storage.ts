@@ -1,43 +1,79 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import crypto from "crypto";
+import { getAdminClient } from "@/utils/supabase/admin";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const BUCKET_NAME = "application-files";
 
-export const isSupabaseConfigured = Boolean(
-  supabaseUrl &&
-  supabaseKey &&
-  !supabaseUrl.includes('your-project') &&
-  supabaseUrl.startsWith('https://')
-);
+export const ALLOWED_FILE_KINDS = [
+  "photo",
+  "sig_student",
+  "sig_parent",
+  "cet_order",
+  "marks_card",
+  "income_cert",
+  "aadhaar",
+  "fee_receipt",
+  "principal_cert",
+] as const;
 
-let _supabaseClient: SupabaseClient | null = null;
+export type AllowedFileKind = typeof ALLOWED_FILE_KINDS[number];
 
-function getStorageClient(): SupabaseClient {
-  if (_supabaseClient) return _supabaseClient;
-  if (!isSupabaseConfigured || !supabaseUrl || !supabaseKey) {
-    throw new Error(
-      'Storage misconfiguration: Supabase storage credentials (NEXT_PUBLIC_SUPABASE_URL and key) are required. Local filesystem storage is disabled.'
-    );
-  }
-  _supabaseClient = createClient(supabaseUrl, supabaseKey);
-  return _supabaseClient;
+export function isValidFileKind(kind: string): kind is AllowedFileKind {
+  return (ALLOWED_FILE_KINDS as readonly string[]).includes(kind);
 }
 
-const BUCKET_NAME = 'application-files';
+/**
+ * Detects file type from magic bytes (header inspection).
+ */
+export function detectMimeFromBytes(buffer: Buffer): { mime: string; ext: string } | null {
+  if (
+    buffer.length >= 4 &&
+    buffer[0] === 0x25 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x44 &&
+    buffer[3] === 0x46
+  ) {
+    return { mime: "application/pdf", ext: "pdf" };
+  }
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return { mime: "image/jpeg", ext: "jpg" };
+  }
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) {
+    return { mime: "image/png", ext: "png" };
+  }
+  if (buffer.length >= 12 && buffer.toString("ascii", 8, 12) === "WEBP") {
+    return { mime: "image/webp", ext: "webp" };
+  }
+  return null;
+}
+
+/**
+ * Generates safe storage path: `${applicationId}/${kind}-${uuid}.${ext}`
+ */
+export function generateStoragePath(applicationId: string, kind: string, ext: string): string {
+  const safeId = crypto.randomUUID();
+  return `${applicationId}/${kind}-${safeId}.${ext}`;
+}
 
 export const storage = {
-  isCloud: () => isSupabaseConfigured,
+  isCloud: () => true,
 
   /**
-   * Saves a file buffer strictly to private Supabase Cloud Storage.
-   * Throws an error on failure. Never claims success falsely and does NOT fall back to local disk.
+   * Saves a file buffer strictly to private Supabase Cloud Storage bucket 'application-files'.
+   * Never falls back to local disk. Throws error on failure.
    */
   async saveFile(filename: string, buffer: Buffer, mime: string): Promise<string> {
-    const client = getStorageClient();
-    const { error } = await client.storage
+    const supabase = getAdminClient();
+    const { error } = await supabase.storage
       .from(BUCKET_NAME)
       .upload(filename, buffer, {
         contentType: mime,
@@ -45,7 +81,7 @@ export const storage = {
       });
 
     if (error) {
-      console.error(`[Storage] Failed to upload file ${filename} to Supabase:`, error.message);
+      console.error(`[Storage] Failed to upload file ${filename}:`, error.message);
       throw new Error(`Cloud storage upload failed: ${error.message}`);
     }
 
@@ -54,15 +90,11 @@ export const storage = {
 
   /**
    * Retrieves a file buffer strictly from private Supabase Cloud Storage.
-   * Returns null if unconfigured or file does not exist.
    */
   async getFileBuffer(filename: string): Promise<Buffer | null> {
-    if (!isSupabaseConfigured) {
-      return null;
-    }
     try {
-      const client = getStorageClient();
-      const { data, error } = await client.storage
+      const supabase = getAdminClient();
+      const { data, error } = await supabase.storage
         .from(BUCKET_NAME)
         .download(filename);
 
@@ -82,12 +114,9 @@ export const storage = {
    * Bucket remains strictly private.
    */
   async getSignedUrl(filename: string, expiresInSeconds: number = 300): Promise<string | null> {
-    if (!isSupabaseConfigured) {
-      return null;
-    }
     try {
-      const client = getStorageClient();
-      const { data, error } = await client.storage
+      const supabase = getAdminClient();
+      const { data, error } = await supabase.storage
         .from(BUCKET_NAME)
         .createSignedUrl(filename, expiresInSeconds);
 
@@ -105,12 +134,9 @@ export const storage = {
    * Deletes a file from Supabase Cloud Storage.
    */
   async deleteFile(filename: string): Promise<boolean> {
-    if (!isSupabaseConfigured) {
-      return false;
-    }
     try {
-      const client = getStorageClient();
-      const { error } = await client.storage
+      const supabase = getAdminClient();
+      const { error } = await supabase.storage
         .from(BUCKET_NAME)
         .remove([filename]);
 

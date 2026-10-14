@@ -153,10 +153,8 @@ export async function POST(
 
     await storage.saveFile(pdfFileName, pdfBuffer, 'application/pdf');
 
-    // 5. Update Application Record in DB only AFTER successful storage save
-    const finalApp = await db.updateApplication(application.id, {
-      status: 'submitted',
-      submitted_at: new Date().toISOString(),
+    // 5. Update Application Record in DB only AFTER successful storage save with idempotent submit
+    const finalApp = await db.submitApplication(application.id, {
       pdf_path: pdfFileName,
       pdf_sha256: sha256,
       merit_score,
@@ -167,6 +165,13 @@ export async function POST(
         eligibility_flags,
       },
     });
+
+    if (!finalApp) {
+      return NextResponse.json(
+        { error: { message: 'Application has already been submitted or is no longer in draft state.' } },
+        { status: 400 }
+      );
+    }
 
     const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
 
