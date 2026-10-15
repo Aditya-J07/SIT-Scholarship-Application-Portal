@@ -98,31 +98,8 @@ CREATE INDEX IF NOT EXISTS idx_applications_student_id ON public.applications(st
 CREATE INDEX IF NOT EXISTS idx_applications_ref_no ON public.applications(ref_no);
 CREATE INDEX IF NOT EXISTS idx_applications_updated_at ON public.applications(updated_at);
 
--- Database-level check trigger to reject submissions before opens_at or after closes_at
-CREATE OR REPLACE FUNCTION check_application_submission_deadline()
-RETURNS trigger AS $$
-DECLARE
-    cycle_row RECORD;
-BEGIN
-    IF NEW.status = 'submitted' AND (OLD.status IS NULL OR OLD.status != 'submitted') THEN
-        SELECT opens_at, closes_at INTO cycle_row FROM public.cycles WHERE id = NEW.cycle_id;
-        IF cycle_row IS NOT NULL THEN
-            IF now() < cycle_row.opens_at THEN
-                RAISE EXCEPTION 'Application submission window has not opened yet. Cycle opens at %', cycle_row.opens_at;
-            END IF;
-            IF now() > cycle_row.closes_at THEN
-                RAISE EXCEPTION 'Application deadline has passed. Cycle closed at %', cycle_row.closes_at;
-            END IF;
-        END IF;
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_check_application_submission_deadline ON public.applications;
-CREATE TRIGGER trg_check_application_submission_deadline
-BEFORE INSERT OR UPDATE ON public.applications
-FOR EACH ROW EXECUTE FUNCTION check_application_submission_deadline();
+-- Application submission window & deadline check trigger is defined in 002_phase2.sql
+-- (See 002_phase2.sql for the hardened check_application_submission_deadline function and trigger)
 
 -- ------------------------------------------------------------------------------
 -- 5. APPLICATION FILES (Metadata for files in private 'application-files' bucket)

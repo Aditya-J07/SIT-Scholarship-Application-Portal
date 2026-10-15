@@ -13,10 +13,34 @@ process.env.ENCRYPTION_KEY_PREVIOUS =
 // Guard against pointing tests to production Supabase project
 const prodUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const testUrl = process.env.TEST_SUPABASE_URL;
+const testPublishableKey = process.env.TEST_SUPABASE_PUBLISHABLE_KEY;
+const testSecretKey = process.env.TEST_SUPABASE_SECRET_KEY;
+const skipIntegration = process.env.SKIP_INTEGRATION === "1";
 
 if (testUrl && prodUrl && testUrl.trim() === prodUrl.trim()) {
   console.error("FATAL: TEST_SUPABASE_URL must NOT equal NEXT_PUBLIC_SUPABASE_URL!");
   console.error("Tests must run against a separate test Supabase project to protect real student data.");
+  process.exit(1);
+}
+
+const hasTestDbConfig =
+  Boolean(testUrl?.trim()) &&
+  Boolean(testPublishableKey?.trim()) &&
+  Boolean(testSecretKey?.trim());
+
+// Loud failure if any test database credentials are missing without explicit SKIP_INTEGRATION=1
+if (!hasTestDbConfig && !skipIntegration) {
+  console.error("\n==================================================================");
+  console.error("FATAL: REAL DATABASE INTEGRATION TESTS FAILED - CONFIG MISSING");
+  console.error("==================================================================");
+  console.error("Integration tests against a real isolated Supabase database are required.");
+  console.error("The following required environment variables are missing or empty:");
+  if (!testUrl?.trim()) console.error("  ✕ TEST_SUPABASE_URL");
+  if (!testPublishableKey?.trim()) console.error("  ✕ TEST_SUPABASE_PUBLISHABLE_KEY");
+  if (!testSecretKey?.trim()) console.error("  ✕ TEST_SUPABASE_SECRET_KEY");
+  console.error("\nTo execute unit and simulated tests without a real test database, you must");
+  console.error("explicitly pass SKIP_INTEGRATION=1 (e.g. 'SKIP_INTEGRATION=1 npm test').");
+  console.error("==================================================================\n");
   process.exit(1);
 }
 
@@ -46,16 +70,38 @@ import crypto from "crypto";
 
 let passedTests = 0;
 let totalTests = 0;
+let realDbTests = 0;
+let simulatedTests = 0;
+let skippedTests = 0;
 
-function assert(condition: boolean, testName: string) {
+function assert(
+  condition: boolean,
+  testName: string,
+  mode: "unit" | "test_db" | "simulated" = "unit"
+) {
   totalTests++;
+  const prefix =
+    mode === "test_db"
+      ? "ran against test DB"
+      : mode === "simulated"
+      ? "simulated"
+      : "unit";
+
   if (condition) {
-    console.log(`  ✓ PASS: ${testName}`);
+    console.log(`  ✓ PASS [${prefix}]: ${testName}`);
     passedTests++;
+    if (mode === "test_db") realDbTests++;
+    if (mode === "simulated") simulatedTests++;
   } else {
-    console.error(`  ✕ FAIL: ${testName}`);
-    throw new Error(`Test failed: ${testName}`);
+    console.error(`  ✕ FAIL [${prefix}]: ${testName}`);
+    throw new Error(`Test failed: [${prefix}] ${testName}`);
   }
+}
+
+function recordSkipped(testName: string, reason: string) {
+  totalTests++;
+  skippedTests++;
+  console.log(`  ⏭ SKIPPED [skipped]: ${testName} (${reason})`);
 }
 
 async function runTests() {
@@ -479,11 +525,25 @@ async function runTests() {
   }
 
   // 9. Isolated Test Project Integration Suite (Part A2, A6)
-  if (testUrl && process.env.TEST_SUPABASE_SECRET_KEY) {
-    console.log(`\n--- 9. Isolated Supabase Integration Suite (Running against: TEST_SUPABASE_URL) ---`);
-    const testAdmin = createClient(testUrl, process.env.TEST_SUPABASE_SECRET_KEY, {
+  if (hasTestDbConfig) {
+    console.log(`\n--- 9. Isolated Supabase Integration Suite (Running against test DB: ${testUrl}) ---`);
+    const testAnon = createClient(testUrl!, testPublishableKey!, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
+    const testAdmin = createClient(testUrl!, testSecretKey!, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+
+    // Test: Anonymous/Publishable client connects to TEST_SUPABASE_URL
+    const { data: schData, error: schErr } = await testAnon
+      .from("scholarships")
+      .select("id, code")
+      .limit(1);
+    assert(!schErr && Array.isArray(schData), "Publishable key client queries test database successfully", "test_db");
+
+    // Test: Service role client connects to TEST_SUPABASE_URL
+    const { error: srvErr } = await testAdmin.from("audit_log").select("id").limit(1);
+    assert(!srvErr, "Service role key client connects to test database successfully", "test_db");
 
     // Test A2: Audit Log Immutability against Service Role
     console.log("  Testing Audit Log Immutability triggers...");
@@ -497,21 +557,21 @@ async function runTests() {
       entity_id: dummyLogId,
       ip: "127.0.0.1",
     });
-    assert(!insErr, "Can append to audit_log via service role");
+    assert(!insErr, "Can append to audit_log via service role", "test_db");
 
     // Attempt UPDATE as service role -> Must fail
     const { error: updErr } = await testAdmin
       .from("audit_log")
       .update({ action: "TAMPERED_ACTION" })
       .eq("id", dummyLogId);
-    assert(Boolean(updErr), "Audit log UPDATE rejected even for service_role by database trigger");
+    assert(Boolean(updErr), "Audit log UPDATE rejected even for service_role by database trigger", "test_db");
 
     // Attempt DELETE as service role -> Must fail
     const { error: delErr } = await testAdmin
       .from("audit_log")
       .delete()
       .eq("id", dummyLogId);
-    assert(Boolean(delErr), "Audit log DELETE rejected even for service_role by database trigger");
+    assert(Boolean(delErr), "Audit log DELETE rejected even for service_role by database trigger", "test_db");
 
     // Test A3 & A6: Throwaway user creation & trigger-based profile creation
     console.log("  Testing throwaway user signup and profile trigger...");
@@ -527,7 +587,7 @@ async function runTests() {
         mobile: "9880112233",
       },
     });
-    assert(!crErr && Boolean(throwawayUser?.user?.id), "Throwaway test student created via admin API");
+    assert(!crErr && Boolean(throwawayUser?.user?.id), "Throwaway test student created via admin API", "test_db");
 
     if (throwawayUser?.user?.id) {
       const studentId = throwawayUser.user.id;
@@ -540,25 +600,41 @@ async function runTests() {
 
       assert(
         !prErr && prof?.role === "student",
-        "auth.users trigger automatically created profile with role = 'student'"
+        "auth.users trigger automatically created profile with role = 'student'",
+        "test_db"
       );
 
       // Verify student cannot elevate their own role to admin
-      const { error: elevErr } = await testAdmin
+      const { error: elevErr } = await testAnon
         .from("profiles")
         .update({ role: "admin" })
         .eq("id", studentId);
-      // Even if admin client can update, application API routes reject client role modification
+      assert(Boolean(elevErr), "Student cannot elevate own role to admin via client", "test_db");
 
       // Clean up throwaway user
       await testAdmin.auth.admin.deleteUser(studentId);
-      console.log("  ✓ Throwaway test user deleted successfully");
+      assert(true, "Throwaway test user deleted successfully", "test_db");
     }
+
+    // Direct Database RPC Rate Limiting Test
+    const { data: rpcData, error: rpcErr } = await testAdmin.rpc("rate_limit_hit", {
+      p_key: `direct_rpc_test:${Date.now()}`,
+      p_window_seconds: 60,
+      p_max: 5,
+    });
+    assert(!rpcErr && rpcData?.[0]?.allowed === true, "Atomic rate limiting function executed via database RPC", "test_db");
   } else {
-    console.log("\n--- 9. Test Supabase Project Notice ---");
-    console.log("  ℹ NOTE: TEST_SUPABASE_* variables not configured.");
-    console.log("  ℹ Integration tests against remote PostgreSQL/Auth require TEST_SUPABASE_URL and TEST_SUPABASE_SECRET_KEY.");
-    console.log("  ℹ Production database guarded: tests never execute against NEXT_PUBLIC_SUPABASE_URL.");
+    console.log("\n--- 9. Isolated Supabase Integration Suite (SKIPPED via SKIP_INTEGRATION=1) ---");
+    recordSkipped("Publishable key client queries test database successfully", "SKIP_INTEGRATION=1");
+    recordSkipped("Service role key client connects to test database successfully", "SKIP_INTEGRATION=1");
+    recordSkipped("Can append to audit_log via service role", "SKIP_INTEGRATION=1");
+    recordSkipped("Audit log UPDATE rejected even for service_role by database trigger", "SKIP_INTEGRATION=1");
+    recordSkipped("Audit log DELETE rejected even for service_role by database trigger", "SKIP_INTEGRATION=1");
+    recordSkipped("Throwaway test student created via admin API", "SKIP_INTEGRATION=1");
+    recordSkipped("auth.users trigger automatically created profile with role = 'student'", "SKIP_INTEGRATION=1");
+    recordSkipped("Student cannot elevate own role to admin via client", "SKIP_INTEGRATION=1");
+    recordSkipped("Throwaway test user deleted successfully", "SKIP_INTEGRATION=1");
+    recordSkipped("Atomic rate limiting function executed via database RPC", "SKIP_INTEGRATION=1");
   }
 
   // 10. File Upload Safety & Magic-Byte Sniffing Tests (Part B1)
@@ -624,14 +700,15 @@ async function runTests() {
   // 12. Atomic Rate Limiting Tests (Part B3)
   console.log("\n--- 12. Atomic Rate Limiting Tests (B3) ---");
   const testIp = `test-client-${Date.now()}`;
+  const rateLimitMode = hasTestDbConfig ? "test_db" : "simulated";
   // 5 allowed login attempts
   for (let i = 1; i <= 5; i++) {
     const res = await checkRateLimit(`test_login:${testIp}`, 60, 5);
-    assert(res.allowed, `Login attempt ${i} of 5 is allowed`);
+    assert(res.allowed, `Login attempt ${i} of 5 is allowed`, rateLimitMode);
   }
   // 6th attempt must be rejected
   const sixthAttempt = await checkRateLimit(`test_login:${testIp}`, 60, 5);
-  assert(!sixthAttempt.allowed && sixthAttempt.retryAfter > 0, "6th bad login attempt returns 429 with Retry-After header");
+  assert(!sixthAttempt.allowed && sixthAttempt.retryAfter > 0, "6th bad login attempt returns 429 with Retry-After header", rateLimitMode);
 
   // Parallel requests atomicity test (20 concurrent requests against a limit of 10)
   const parallelKey = `parallel_test:${Date.now()}`;
@@ -639,8 +716,8 @@ async function runTests() {
   const parallelResults = await Promise.all(parallelPromises);
   const allowedCount = parallelResults.filter((r) => r.allowed).length;
   const blockedCount = parallelResults.filter((r) => !r.allowed).length;
-  assert(allowedCount === 10, "Exactly 10 requests allowed under 20 parallel requests");
-  assert(blockedCount === 10, "Remaining 10 parallel requests atomically returned 429");
+  assert(allowedCount === 10, "Exactly 10 requests allowed under 20 parallel requests", rateLimitMode);
+  assert(blockedCount === 10, "Remaining 10 parallel requests atomically returned 429", rateLimitMode);
 
   // 13. CSV Formula Injection Neutralization Tests (Part B5)
   console.log("\n--- 13. CSV Formula Injection Neutralization Tests (B5) ---");
@@ -735,7 +812,13 @@ async function runTests() {
   assert(year2Backlog.backlog_disqualified && !year2Backlog.passed_all_hard_rules, "Backlog history blocks Year 2 student for MNC");
 
   console.log("\n====================================================");
-  console.log(`ALL TESTS PASSED: ${passedTests} / ${totalTests} (100% Pass Rate)`);
+  console.log("TEST SUITE EXECUTION SUMMARY:");
+  console.log(`  Total Evaluated:      ${totalTests}`);
+  console.log(`  Total Passed:         ${passedTests}`);
+  console.log(`  - Unit Tests:         ${passedTests - realDbTests - simulatedTests} (unit tests in memory)`);
+  console.log(`  - Real DB Tests:      ${realDbTests} (ran against test DB)`);
+  console.log(`  - Simulated Tests:    ${simulatedTests} (simulated fallback)`);
+  console.log(`  - Skipped Tests:      ${skippedTests} (skipped)`);
   console.log("====================================================");
 }
 

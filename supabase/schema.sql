@@ -98,31 +98,46 @@ CREATE INDEX IF NOT EXISTS idx_applications_student_id ON public.applications(st
 CREATE INDEX IF NOT EXISTS idx_applications_ref_no ON public.applications(ref_no);
 CREATE INDEX IF NOT EXISTS idx_applications_updated_at ON public.applications(updated_at);
 
--- Database-level check trigger to reject submissions before opens_at or after closes_at
-CREATE OR REPLACE FUNCTION check_application_submission_deadline()
-RETURNS trigger AS $$
+-- Hardened submission deadline trigger
+CREATE OR REPLACE FUNCTION public.check_application_submission_deadline()
+RETURNS TRIGGER AS $$
 DECLARE
-    cycle_row RECORD;
+  v_cycle RECORD;
 BEGIN
-    IF NEW.status = 'submitted' AND (OLD.status IS NULL OR OLD.status != 'submitted') THEN
-        SELECT opens_at, closes_at INTO cycle_row FROM public.cycles WHERE id = NEW.cycle_id;
-        IF cycle_row IS NOT NULL THEN
-            IF now() < cycle_row.opens_at THEN
-                RAISE EXCEPTION 'Application submission window has not opened yet. Cycle opens at %', cycle_row.opens_at;
-            END IF;
-            IF now() > cycle_row.closes_at THEN
-                RAISE EXCEPTION 'Application deadline has passed. Cycle closed at %', cycle_row.closes_at;
-            END IF;
-        END IF;
+  IF NEW.status = 'submitted' AND (OLD.status IS DISTINCT FROM 'submitted') THEN
+    SELECT opens_at, closes_at, status INTO v_cycle
+    FROM public.cycles
+    WHERE id = NEW.cycle_id;
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Scholarship cycle record not found for application.';
     END IF;
-    RETURN NEW;
+
+    IF v_cycle.status != 'open' THEN
+      RAISE EXCEPTION 'Application window is not currently open for this scholarship cycle.';
+    END IF;
+
+    IF v_cycle.opens_at IS NULL OR v_cycle.closes_at IS NULL THEN
+      RAISE EXCEPTION 'Official scholarship cycle dates have not been confirmed by the Accounts Section.';
+    END IF;
+
+    IF NOW() < v_cycle.opens_at THEN
+      RAISE EXCEPTION 'Application window has not opened yet.';
+    END IF;
+
+    IF NOW() > v_cycle.closes_at THEN
+      RAISE EXCEPTION 'Application deadline has passed. Submissions are closed.';
+    END IF;
+  END IF;
+
+  RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trg_check_application_submission_deadline ON public.applications;
 CREATE TRIGGER trg_check_application_submission_deadline
-BEFORE INSERT OR UPDATE ON public.applications
-FOR EACH ROW EXECUTE FUNCTION check_application_submission_deadline();
+BEFORE UPDATE ON public.applications
+FOR EACH ROW EXECUTE FUNCTION public.check_application_submission_deadline();
 
 -- ------------------------------------------------------------------------------
 -- 5. APPLICATION FILES (Metadata for files in private 'application-files' bucket)

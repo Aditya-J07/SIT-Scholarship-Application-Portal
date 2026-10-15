@@ -54,16 +54,12 @@ Follow this step-by-step checklist to configure a new Supabase project for the p
 - In **Authentication → Providers → Email**:
   - Turn **Confirm email** ON (required before student login or submission).
 
-### 3. Run Database Migration
-- Open **SQL Editor** in the Supabase Dashboard.
-- Copy and run the contents of [`supabase/migrations/001_init.sql`](supabase/migrations/001_init.sql).
-- This creates:
-  - `profiles` table linked to `auth.users(id) ON DELETE CASCADE`
-  - `scholarships`, `cycles`, `applications`, `application_files`, `remarks`, `audit_log`, `rate_limits`
-  - RLS policies on all tables
-  - Append-only immutable audit log trigger
-  - Submission deadline check trigger
-  - Private storage bucket `application-files`
+### 3. Run Database Migrations (Sequential Order)
+When initializing an empty Supabase project, execute the SQL migration scripts in numerical sequence in the Supabase **SQL Editor**:
+1. **`supabase/migrations/001_init.sql`**: Provisions core tables (`profiles`, `scholarships`, `cycles`, `applications`, `application_files`, `remarks`, `audit_log`, `rate_limits`), indexes, RLS policies, and immutable append-only audit log triggers.
+2. **`supabase/migrations/002_phase2.sql`**: Applies Phase 2 security hardening, including canonical status constraints, statement-level truncate prevention, `auth.users` profile generation trigger, atomic `rate_limit_hit` function, and the hardened submission deadline trigger.
+
+> **Note on Migration Order:** Migration scripts must be executed in order (`001_init.sql` then `002_phase2.sql`). The submission deadline trigger is defined once and solely in `002_phase2.sql` to avoid duplicate trigger conflicts. For a fresh single-step setup, you may alternatively execute [`supabase/schema.sql`](supabase/schema.sql), which contains the consolidated idempotent schema.
 
 ### 4. Seed Initial Data
 - Populate `.env.local` with your Supabase credentials (see section below).
@@ -106,6 +102,7 @@ Create `.env.local` in the project root based on `.env.example`:
 | `NEXT_PUBLIC_APP_URL` | Browser & Server | Base URL of deployment (e.g. `http://localhost:3000` or production URL) |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | CLI Only | Required only when running `scripts/create-admin.ts` |
 | `TEST_SUPABASE_URL` | Test Only | Separate test Supabase project URL (must NOT equal production URL) |
+| `TEST_SUPABASE_PUBLISHABLE_KEY` | Test Only | Separate test Supabase publishable key |
 | `TEST_SUPABASE_SECRET_KEY` | Test Only | Separate test Supabase secret key |
 
 Generate a 32-byte base64 encryption key using Node.js:
@@ -121,8 +118,11 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 # 1. Install dependencies
 npm install
 
-# 2. Run automated test suite (includes safety collision guards)
-npm test
+# 2. Run automated test suite
+# If TEST_SUPABASE_* variables are configured, integration tests execute against the test database.
+# If TEST_SUPABASE_* variables are not provided, run with SKIP_INTEGRATION=1 to run unit tests:
+npm test                      # Requires TEST_SUPABASE_URL, TEST_SUPABASE_PUBLISHABLE_KEY, TEST_SUPABASE_SECRET_KEY
+SKIP_INTEGRATION=1 npm test   # Skips DB integration tests and runs all unit & simulated tests
 
 # 3. Run linter
 npm run lint
