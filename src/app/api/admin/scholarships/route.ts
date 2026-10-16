@@ -1,12 +1,10 @@
 import { NextResponse } from 'next/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { requireAdmin } from '@/lib/auth/admin-guard';
 import { db } from '@/lib/db';
 
-export async function GET() {
-  const session = await getCurrentSession();
-  if (!session || session.role !== 'admin') {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 403 });
-  }
+export async function GET(request?: Request) {
+  const { session, errorResponse } = await requireAdmin();
+  if (errorResponse) return errorResponse;
 
   const scholarships = await db.listScholarships();
   const cycles = await db.listCycles();
@@ -15,10 +13,8 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  const session = await getCurrentSession();
-  if (!session || session.role !== 'admin') {
-    return NextResponse.json({ error: { message: 'Only Admin can update scholarship configuration' } }, { status: 403 });
-  }
+  const { session, errorResponse } = await requireAdmin();
+  if (errorResponse) return errorResponse;
 
   try {
     const body = await request.json();

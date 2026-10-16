@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { db } from "@/lib/db";
-import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
+import {
+  checkRateLimit,
+  getClientIp,
+  rateLimitResponse,
+  rateLimitUnavailableResponse,
+} from "@/lib/rate-limit";
 import { verifyStateChangingOrigin } from "@/lib/auth/origin-guard";
 
 export async function POST(request: Request) {
@@ -24,13 +29,19 @@ export async function POST(request: Request) {
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    // 2. Atomic Rate Limiting: 5 per 15 minutes per IP and per Email
+    // 2. Atomic Rate Limiting: 5 per 15 minutes per IP and per Email (fail closed with 503 if DB limiter fails)
     const ipLimit = await checkRateLimit(`login:ip:${clientIp}`, 900, 5);
+    if (ipLimit.dbUnavailable) {
+      return rateLimitUnavailableResponse();
+    }
     if (!ipLimit.allowed) {
       return rateLimitResponse(ipLimit.retryAfter);
     }
 
     const emailLimit = await checkRateLimit(`login:email:${normalizedEmail}`, 900, 5);
+    if (emailLimit.dbUnavailable) {
+      return rateLimitUnavailableResponse();
+    }
     if (!emailLimit.allowed) {
       return rateLimitResponse(emailLimit.retryAfter);
     }

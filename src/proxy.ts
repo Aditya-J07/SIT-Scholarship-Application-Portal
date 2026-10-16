@@ -33,7 +33,7 @@ export async function proxy(request: NextRequest) {
       const admin = getAdminClient();
       const { data: profile } = await admin
         .from("profiles")
-        .select("role, must_change_password")
+        .select("role, must_change_password, last_seen_at")
         .eq("id", user.id)
         .maybeSingle();
 
@@ -64,9 +64,19 @@ export async function proxy(request: NextRequest) {
       }
 
       // Role check: redirect non-staff away from /admin pages
-      if (pathname.startsWith("/admin") && pathname !== "/admin-login") {
+      if (pathname.startsWith("/admin") && !pathname.startsWith("/admin-login")) {
         if (profile?.role !== "admin" && profile?.role !== "reviewer") {
           return NextResponse.redirect(new URL("/admin-login", request.url));
+        }
+
+        // Check 30-minute idle timeout on staff page requests
+        if (profile?.last_seen_at) {
+          const idleMinutes = (Date.now() - new Date(profile.last_seen_at).getTime()) / (1000 * 60);
+          if (idleMinutes > 30) {
+            const timeoutUrl = new URL("/admin-login", request.url);
+            timeoutUrl.searchParams.set("error", "Staff session expired due to 30 minutes of inactivity.");
+            return NextResponse.redirect(timeoutUrl);
+          }
         }
       }
     } catch {

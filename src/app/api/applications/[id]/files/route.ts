@@ -6,6 +6,7 @@ import { storage } from '@/lib/storage';
 import { checkRateLimit, getClientIp, rateLimitResponse } from '@/lib/rate-limit';
 import { verifyStateChangingOrigin } from '@/lib/auth/origin-guard';
 import crypto from 'crypto';
+import sharp from 'sharp';
 
 const ALLOWED_KINDS = new Set([
   'photo',
@@ -173,6 +174,20 @@ export async function POST(
       ext = 'jpg';
     }
 
+    // Strip EXIF metadata from uploaded images (auto-orient according to EXIF and remove all metadata tags)
+    let finalBuffer = buffer;
+    if (isPng || isJpg || isWebp) {
+      try {
+        finalBuffer = await sharp(buffer).rotate().toBuffer();
+      } catch (err: unknown) {
+        console.error('Image EXIF stripping / validation error:', err);
+        return NextResponse.json(
+          { error: { message: 'Corrupted image file or unsupported image structure.' } },
+          { status: 400 }
+        );
+      }
+    }
+
     // If replacing an existing file of the same kind, delete the previous storage object
     const previousFile = existingFiles.find((f: ApplicationFileRecord) => f.kind === kind);
     if (previousFile) {
@@ -180,12 +195,12 @@ export async function POST(
       await db.deleteFileRecord(previousFile.id);
     }
 
-    const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+    const sha256 = crypto.createHash('sha256').update(finalBuffer).digest('hex');
     const safeFileId = crypto.randomUUID();
     // Secure server-generated storage path (never uses user input)
     const storagePath = `${application.id}/${kind}-${safeFileId}.${ext}`;
 
-    await storage.saveFile(storagePath, buffer, detectedMime);
+    await storage.saveFile(storagePath, finalBuffer, detectedMime);
 
     // Sanitize original filename for display
     const sanitizedName = file.name
@@ -199,7 +214,7 @@ export async function POST(
       kind,
       storage_path: storagePath,
       mime: detectedMime,
-      size_bytes: sizeBytes,
+      size_bytes: finalBuffer.length,
       sha256,
       original_name: sanitizedName || `${kind}.${ext}`,
       uploaded_at: new Date().toISOString(),

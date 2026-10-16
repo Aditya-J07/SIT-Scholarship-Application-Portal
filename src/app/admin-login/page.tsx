@@ -43,11 +43,8 @@ export default function AdminLoginPage() {
         return;
       }
 
-      // TODO(phase2): Check aal (authenticator assurance level) for TOTP MFA and recovery codes
-      // const aal = data.aal;
-      // if (aal === 'aal1' && data.user.two_factor_enabled) { router.push('/admin-mfa'); return; }
-
-      router.push("/admin");
+      // Elevate session: route staff to MFA enrolment or verification
+      router.push("/admin-login/mfa");
       router.refresh();
     } catch {
       setLoading(false);

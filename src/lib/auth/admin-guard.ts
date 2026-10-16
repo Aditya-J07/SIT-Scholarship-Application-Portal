@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentSession, SessionPayload } from "./session";
+import { createClient } from "@/utils/supabase/server";
+import { db } from "../db";
 
 /**
  * Shared administrative guard for all /api/admin/* endpoints and staff workflows.
@@ -50,23 +52,78 @@ export async function requireAdminSession(options?: {
     };
   }
 
-  // Enforce TOTP MFA (aal2) for staff accounts
-  const enforceMfa = options?.requireAal2 ?? true;
-  if (enforceMfa && session.aal !== "aal2") {
-    // In production or when ENFORCE_MFA is enabled, reject any staff request without verified aal2
-    if (process.env.NODE_ENV === "production" || process.env.ENFORCE_MFA === "true") {
+  // Enforce 30-minute server-side idle timeout for staff accounts
+  if (session.last_seen_at) {
+    const lastSeenMs = new Date(session.last_seen_at).getTime();
+    const idleMinutes = (Date.now() - lastSeenMs) / (1000 * 60);
+    if (idleMinutes > 30) {
+      try {
+        const supabase = await createClient();
+        await supabase.auth.signOut();
+      } catch {
+        // Continue
+      }
       return {
         session: null,
         errorResponse: NextResponse.json(
           {
-            code: "MFA_REQUIRED",
-            error: { message: "Multi-factor authentication (TOTP) verification is required for staff access." },
+            code: "IDLE_TIMEOUT",
+            error: {
+              message: "Staff session timed out due to 30 minutes of inactivity. Please log in again.",
+            },
           },
-          { status: 403 }
+          { status: 401 }
         ),
       };
     }
   }
 
+  // Update staff last_seen timestamp on valid active request
+  await db.updateStaffLastSeen(session.userId);
+
+  // Enforce TOTP MFA (aal2) for staff accounts
+  const enforceMfa = options?.requireAal2 ?? true;
+  if (enforceMfa && session.aal !== "aal2") {
+    let hasFactors = false;
+    try {
+      const supabase = await createClient();
+      const { data: factors } = await supabase.auth.mfa.listFactors();
+      const verified = factors?.totp?.filter((f: { status: string }) => f.status === "verified") || [];
+      hasFactors = verified.length > 0;
+    } catch {
+      hasFactors = false;
+    }
+
+    return {
+      session: null,
+      errorResponse: NextResponse.json(
+        {
+          code: hasFactors ? "MFA_REQUIRED" : "MFA_ENROLLMENT_REQUIRED",
+          error: {
+            message: hasFactors
+              ? "Multi-factor authentication (TOTP) verification is required for staff access."
+              : "TOTP MFA enrollment is required before accessing staff features.",
+          },
+          enrolled: hasFactors,
+          redirect: hasFactors ? "/admin-login/mfa" : "/admin-login/mfa?mode=enroll",
+        },
+        { status: 403 }
+      ),
+    };
+  }
+
   return { session, errorResponse: null };
 }
+
+export async function requireAdmin(): Promise<
+  { session: SessionPayload; errorResponse: null } | { session: null; errorResponse: NextResponse }
+> {
+  return requireAdminSession({ allowReviewer: false, requireAal2: true });
+}
+
+export async function requireAdminOrReviewer(): Promise<
+  { session: SessionPayload; errorResponse: null } | { session: null; errorResponse: NextResponse }
+> {
+  return requireAdminSession({ allowReviewer: true, requireAal2: true });
+}
+

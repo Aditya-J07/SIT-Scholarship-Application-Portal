@@ -11,6 +11,7 @@ export interface SessionPayload {
   mustChangePassword: boolean;
   bank_acc_last4?: string;
   aal?: "aal1" | "aal2";
+  last_seen_at?: string;
   exp?: number;
 }
 
@@ -20,6 +21,10 @@ export interface SessionPayload {
  * Roles are strictly database-controlled; never read from client tokens or user_metadata.
  */
 export async function getCurrentSession(): Promise<SessionPayload | null> {
+  if (process.env.NODE_ENV !== "production" && (globalThis as any).__testSessionOverride) {
+    return (globalThis as any).__testSessionOverride;
+  }
+
   try {
     const supabase = await createClient();
     const {
@@ -62,6 +67,7 @@ export async function getCurrentSession(): Promise<SessionPayload | null> {
       mustChangePassword: profile.must_change_password ?? false,
       bank_acc_last4: profile.bank_acc_last4,
       aal,
+      last_seen_at: profile.last_seen_at,
     };
   } catch {
     return null;

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { requireAdminOrReviewer } from '@/lib/auth/admin-guard';
 import { db } from '@/lib/db';
 import crypto from 'crypto';
 
@@ -7,10 +7,8 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getCurrentSession();
-  if (!session || (session.role !== 'admin' && session.role !== 'reviewer')) {
-    return NextResponse.json({ error: { message: 'Unauthorized staff access required' } }, { status: 403 });
-  }
+  const { session, errorResponse } = await requireAdminOrReviewer();
+  if (errorResponse) return errorResponse;
 
   const { id } = await params;
   const application = await db.findApplicationById(id);

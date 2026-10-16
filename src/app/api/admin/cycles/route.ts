@@ -1,24 +1,20 @@
 import { NextResponse } from 'next/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { requireAdmin } from '@/lib/auth/admin-guard';
 import { db } from '@/lib/db';
 import { AcademicCycle } from '@/lib/types';
 import crypto from 'crypto';
 
-export async function GET() {
-  const session = await getCurrentSession();
-  if (!session || session.role !== 'admin') {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 403 });
-  }
+export async function GET(request?: Request) {
+  const { session, errorResponse } = await requireAdmin();
+  if (errorResponse) return errorResponse;
 
   const cycles = await db.listCycles();
   return NextResponse.json({ cycles });
 }
 
 export async function POST(request: Request) {
-  const session = await getCurrentSession();
-  if (!session || session.role !== 'admin') {
-    return NextResponse.json({ error: { message: 'Only Admin can configure cycles' } }, { status: 403 });
-  }
+  const { session, errorResponse } = await requireAdmin();
+  if (errorResponse) return errorResponse;
 
   try {
     const body = await request.json();
@@ -56,10 +52,8 @@ export async function POST(request: Request) {
 }
 
 export async function PUT(request: Request) {
-  const session = await getCurrentSession();
-  if (!session || session.role !== 'admin') {
-    return NextResponse.json({ error: { message: 'Only Admin can update cycles' } }, { status: 403 });
-  }
+  const { session, errorResponse } = await requireAdmin();
+  if (errorResponse) return errorResponse;
 
   try {
     const body = await request.json();

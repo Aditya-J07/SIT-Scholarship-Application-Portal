@@ -63,7 +63,14 @@ If all administrators are locked out simultaneously:
 
 ## 3. Session & Timeout Settings
 
-- **Idle Timeout:** Staff sessions automatically expire after **30 minutes of inactivity**.
+### 3.1 Server-Side Staff Idle Timeout (30 Minutes)
+- **Idle Timeout:** Staff sessions automatically expire after **30 minutes (1,800 seconds) of inactivity**.
+- **Why Server-Side `last_seen_at` is Required (Refresh Tokens Renew Access Tokens):**
+  Under Supabase / OAuth token architecture, browser client libraries automatically use long-lived refresh tokens in the background to mint fresh short-lived JWT access tokens. Consequently, relying solely on client-side state or JWT expiry does **NOT** terminate an idle user session if the browser silently refreshes tokens.
+  The portal therefore enforces a strict **server-side idle timeout**:
+  - Each authenticated staff request (via `requireAdminOrReviewer`, `requireAdmin`, or proxy) checks `profiles.last_seen_at`.
+  - If more than 30 minutes have elapsed since `last_seen_at`, the server rejects the request with HTTP 401 (`{ code: "IDLE_TIMEOUT" }`), signs out the user via Supabase Auth, and clears all session cookies.
+  - On active requests within the 30-minute window, the server automatically updates `last_seen_at` to `NOW()`.
 - **Supabase Dashboard Recommendations:**
   - In **Authentication → Settings**:
     - Set **JWT Expiry limit** to `1800` seconds (30 minutes).
@@ -71,7 +78,29 @@ If all administrators are locked out simultaneously:
 
 ---
 
-## 4. Academic Cycle Operations
+## 4. Rate Limiting Maintenance & Cron Cleanup
+
+### 4.1 Production Fail-Closed Behavior
+- Production rate limiting runs against the PostgreSQL database function `public.rate_limit_hit(key, window, max_req)`.
+- If the database call fails, critical authentication endpoints (`/api/auth/login` and `/api/auth/register`) **fail closed with HTTP 503 (Service Unavailable)** to protect against credential stuffing and brute force attacks during database degradation.
+- In-memory rate limiting is strictly forbidden in production and only allowed in unit tests under `ALLOW_IN_MEMORY_RATE_LIMIT=1`.
+
+### 4.2 Cleanup of Expired Rate Limits (`cleanup_expired_rate_limits`)
+Over time, entries in `public.rate_limits` expire (`reset_at < now()`). The portal provides a cleanup routine `cleanup_expired_rate_limits()` in migration `003_phase2c.sql`.
+
+- **Vercel Cron Setup (Recommended):**
+  - Configured in `vercel.json` to call `/api/cron/cleanup-rate-limits` hourly (`0 * * * *`).
+  - Secured via `Authorization: Bearer <CRON_SECRET>`.
+  - **Required Action:** Set `CRON_SECRET` to a cryptographically random secret in Vercel Project Settings → Environment Variables.
+- **PostgreSQL `pg_cron` Alternative:**
+  If the `pg_cron` extension is enabled on your Supabase project (available on Pro plans):
+  ```sql
+  SELECT cron.schedule('cleanup-expired-rate-limits', '0 * * * *', 'SELECT public.cleanup_expired_rate_limits()');
+  ```
+
+---
+
+## 5. Academic Cycle Operations
 
 1. In accordance with institutional security rules, new cycles are seeded with `status = 'closed'` and `NULL` dates.
 2. The Accounts Section must confirm official notification circular dates before opening an application window.

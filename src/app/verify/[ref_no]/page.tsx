@@ -48,7 +48,7 @@ export default async function VerifyPage({
               </div>
               <div className="flex justify-between py-1 border-b border-gray-200">
                 <span className="text-gray-500 font-medium">Academic Cycle:</span>
-                <span className="font-semibold text-gray-800">{cycle?.academic_year || '2026–2027'}</span>
+                <span className="font-semibold text-gray-800">{cycle?.academic_year || '—'}</span>
               </div>
               <div className="flex justify-between py-1 border-b border-gray-200">
                 <span className="text-gray-500 font-medium">Current Status:</span>

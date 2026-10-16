@@ -31,6 +31,7 @@ export interface UserProfile {
   bank_name?: string;
   bank_branch?: string;
   bank_ifsc?: string;
+  last_seen_at?: string;
   created_at: string;
   updated_at: string;
 }

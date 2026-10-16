@@ -57,15 +57,27 @@ function checkInMemoryRateLimit(
   return { allowed: true, retryAfter: 0 };
 }
 
+export interface RateLimitResult {
+  allowed: boolean;
+  retryAfter: number;
+  dbUnavailable?: boolean;
+}
+
 /**
  * Executes an atomic rate-limit check via PostgreSQL function rate_limit_hit(key, window, max).
- * Falls back safely to bounded in-memory counter if database RPC is unavailable.
+ * In production, this strictly calls PostgreSQL. If DB RPC is unavailable, it fails closed (dbUnavailable: true)
+ * so critical endpoints (login, register) can return 503 instead of bypassing security.
+ * The in-memory fallback is restricted to unit test suites with ALLOW_IN_MEMORY_RATE_LIMIT=1.
  */
 export async function checkRateLimit(
   key: string,
   windowSeconds: number,
   maxPoints: number
-): Promise<{ allowed: boolean; retryAfter: number }> {
+): Promise<RateLimitResult> {
+  const allowMemory =
+    process.env.ALLOW_IN_MEMORY_RATE_LIMIT === "1" &&
+    process.env.NODE_ENV !== "production";
+
   try {
     const admin = getAdminClient();
     const { data, error } = await admin.rpc("rate_limit_hit", {
@@ -75,15 +87,22 @@ export async function checkRateLimit(
     });
 
     if (error || !data || data.length === 0) {
-      return checkInMemoryRateLimit(key, windowSeconds, maxPoints);
+      if (allowMemory) {
+        return { ...checkInMemoryRateLimit(key, windowSeconds, maxPoints), dbUnavailable: false };
+      }
+      return { allowed: false, retryAfter: 60, dbUnavailable: true };
     }
 
     return {
       allowed: Boolean(data[0].allowed),
       retryAfter: Number(data[0].retry_after) || 0,
+      dbUnavailable: false,
     };
   } catch {
-    return checkInMemoryRateLimit(key, windowSeconds, maxPoints);
+    if (allowMemory) {
+      return { ...checkInMemoryRateLimit(key, windowSeconds, maxPoints), dbUnavailable: false };
+    }
+    return { allowed: false, retryAfter: 60, dbUnavailable: true };
   }
 }
 
@@ -102,6 +121,26 @@ export function rateLimitResponse(retryAfter: number): NextResponse {
       status: 429,
       headers: {
         "Retry-After": retryAfter.toString(),
+      },
+    }
+  );
+}
+
+/**
+ * Constructs a standard HTTP 503 Service Unavailable response when security rate limiter fails.
+ */
+export function rateLimitUnavailableResponse(): NextResponse {
+  return NextResponse.json(
+    {
+      error: {
+        code: "SERVICE_UNAVAILABLE",
+        message: "Security rate limiting service is temporarily unavailable. Please try again shortly.",
+      },
+    },
+    {
+      status: 503,
+      headers: {
+        "Retry-After": "30",
       },
     }
   );

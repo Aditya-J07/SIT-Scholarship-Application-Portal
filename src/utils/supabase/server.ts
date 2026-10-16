@@ -2,7 +2,21 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
 export async function createClient(customCookieStore?: Awaited<ReturnType<typeof cookies>>) {
-  const cookieStore = customCookieStore ?? (await cookies());
+  let cookieStore: any;
+  if (customCookieStore) {
+    cookieStore = customCookieStore;
+  } else {
+    try {
+      cookieStore = await cookies();
+    } catch {
+      // Outside Next.js request scope (e.g. integration test environment)
+      cookieStore = (globalThis as any).__testCookieStore ?? {
+        getAll: () => [],
+        set: () => {},
+        get: () => undefined,
+      };
+    }
+  }
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const supabaseKey =
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||

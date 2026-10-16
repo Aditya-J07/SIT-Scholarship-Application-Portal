@@ -1,13 +1,11 @@
 import { NextResponse } from 'next/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { requireAdminOrReviewer } from '@/lib/auth/admin-guard';
 import { db } from '@/lib/db';
 import { maskBankAccount } from '@/lib/crypto/encryption';
 
 export async function GET(request: Request) {
-  const session = await getCurrentSession();
-  if (!session || (session.role !== 'admin' && session.role !== 'reviewer')) {
-    return NextResponse.json({ error: { message: 'Unauthorized staff access required' } }, { status: 403 });
-  }
+  const { session, errorResponse } = await requireAdminOrReviewer();
+  if (errorResponse) return errorResponse;
 
   const { searchParams } = new URL(request.url);
   const search = searchParams.get('search')?.toLowerCase() || '';

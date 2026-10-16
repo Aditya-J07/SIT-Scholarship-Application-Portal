@@ -10,10 +10,13 @@ try {
   supabaseHost = "";
 }
 
+const isDev = process.env.NODE_ENV === "development";
+
 // Content-Security-Policy dynamically built with Supabase project URL (no hardcoded project ref)
+// 'unsafe-eval' is only allowed in development for Fast Refresh / tooling; removed in production.
 const cspHeader = `
   default-src 'self';
-  script-src 'self' 'unsafe-inline' 'unsafe-eval';
+  script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""};
   style-src 'self' 'unsafe-inline';
   img-src 'self' data: blob: ${supabaseHost};
   font-src 'self' data:;

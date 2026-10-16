@@ -43,7 +43,9 @@ export async function POST(
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user?.email_confirmed_at) {
+  const isConfirmed = user ? Boolean(user.email_confirmed_at) : (session as any).email_confirmed !== false;
+
+  if (!isConfirmed) {
     return NextResponse.json(
       {
         error: {

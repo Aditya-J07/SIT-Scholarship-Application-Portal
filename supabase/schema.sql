@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     bank_name TEXT,
     bank_branch TEXT,
     bank_ifsc TEXT,
+    last_seen_at TIMESTAMPTZ,   -- Staff session activity tracker for 30-min idle timeout
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -218,6 +219,69 @@ CREATE TABLE IF NOT EXISTS public.rate_limits (
 );
 
 CREATE INDEX IF NOT EXISTS idx_rate_limits_expire_at ON public.rate_limits(expire_at);
+
+-- Atomic Rate Limiting Function
+CREATE OR REPLACE FUNCTION public.rate_limit_hit(
+  p_key TEXT,
+  p_window_seconds INT,
+  p_max INT
+)
+RETURNS TABLE(allowed BOOLEAN, retry_after INT)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_now TIMESTAMPTZ := clock_timestamp();
+  v_reset_at TIMESTAMPTZ;
+  v_count INT;
+BEGIN
+  INSERT INTO public.rate_limits (key, points, expire_at)
+  VALUES (p_key, 1, v_now + (p_window_seconds || ' seconds')::interval)
+  ON CONFLICT (key) DO UPDATE
+  SET 
+    points = CASE 
+      WHEN public.rate_limits.expire_at <= v_now THEN 1
+      ELSE public.rate_limits.points + 1
+    END,
+    expire_at = CASE
+      WHEN public.rate_limits.expire_at <= v_now THEN v_now + (p_window_seconds || ' seconds')::interval
+      ELSE public.rate_limits.expire_at
+    END
+  RETURNING public.rate_limits.points, public.rate_limits.expire_at INTO v_count, v_reset_at;
+
+  IF v_count > p_max THEN
+    allowed := false;
+    retry_after := GREATEST(1, EXTRACT(EPOCH FROM (v_reset_at - v_now))::int);
+  ELSE
+    allowed := true;
+    retry_after := 0;
+  END IF;
+
+  RETURN NEXT;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.rate_limit_hit(TEXT, INT, INT) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.rate_limit_hit(TEXT, INT, INT) TO service_role;
+
+-- Expired Rate Limits Cleanup Function
+CREATE OR REPLACE FUNCTION public.cleanup_expired_rate_limits()
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_deleted integer;
+BEGIN
+  DELETE FROM public.rate_limits
+  WHERE expire_at < clock_timestamp();
+  GET DIAGNOSTICS v_deleted = ROW_COUNT;
+  RETURN v_deleted;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.cleanup_expired_rate_limits() FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.cleanup_expired_rate_limits() TO service_role;
 
 -- ------------------------------------------------------------------------------
 -- 9. ROW LEVEL SECURITY (RLS) POLICIES

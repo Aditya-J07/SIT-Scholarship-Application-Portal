@@ -47,6 +47,7 @@ function mapProfileFromDb(row: Record<string, unknown>): UserProfile {
     bank_name: row.bank_name ? String(row.bank_name) : undefined,
     bank_branch: row.bank_branch ? String(row.bank_branch) : undefined,
     bank_ifsc: row.bank_ifsc ? String(row.bank_ifsc) : undefined,
+    last_seen_at: row.last_seen_at ? String(row.last_seen_at) : undefined,
     created_at: String(row.created_at || new Date().toISOString()),
     updated_at: String(row.updated_at || new Date().toISOString()),
   };
@@ -61,6 +62,18 @@ function getSafeClient() {
 }
 
 export const db = {
+  updateStaffLastSeen: async (userId: string): Promise<void> => {
+    const supabase = getSafeClient();
+    if (!supabase) return;
+    try {
+      await supabase
+        .from("profiles")
+        .update({ last_seen_at: new Date().toISOString() })
+        .eq("id", userId);
+    } catch (err) {
+      console.error("[DB] updateStaffLastSeen error:", err);
+    }
+  },
   // --------------------------------------------------------------------------
   // Profiles / Users
   // --------------------------------------------------------------------------

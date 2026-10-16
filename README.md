@@ -58,8 +58,9 @@ Follow this step-by-step checklist to configure a new Supabase project for the p
 When initializing an empty Supabase project, execute the SQL migration scripts in numerical sequence in the Supabase **SQL Editor**:
 1. **`supabase/migrations/001_init.sql`**: Provisions core tables (`profiles`, `scholarships`, `cycles`, `applications`, `application_files`, `remarks`, `audit_log`, `rate_limits`), indexes, RLS policies, and immutable append-only audit log triggers.
 2. **`supabase/migrations/002_phase2.sql`**: Applies Phase 2 security hardening, including canonical status constraints, statement-level truncate prevention, `auth.users` profile generation trigger, atomic `rate_limit_hit` function, and the hardened submission deadline trigger.
+3. **`supabase/migrations/003_phase2c.sql`**: Adds `last_seen_at` column to `public.profiles` for server-side staff idle timeout and creates `cleanup_expired_rate_limits()` stored procedure for cron rate limit row purging.
 
-> **Note on Migration Order:** Migration scripts must be executed in order (`001_init.sql` then `002_phase2.sql`). The submission deadline trigger is defined once and solely in `002_phase2.sql` to avoid duplicate trigger conflicts. For a fresh single-step setup, you may alternatively execute [`supabase/schema.sql`](supabase/schema.sql), which contains the consolidated idempotent schema.
+> **Note on Migration Order:** Migration scripts must be executed in order (`001_init.sql` → `002_phase2.sql` → `003_phase2c.sql`). Migration `002_phase2.sql` is idempotent with `DROP TRIGGER IF EXISTS` / `DROP FUNCTION IF EXISTS`. For a fresh single-step setup, you may alternatively execute [`supabase/schema.sql`](supabase/schema.sql), which contains the consolidated idempotent schema.
 
 ### 4. Seed Initial Data
 - Populate `.env.local` with your Supabase credentials (see section below).

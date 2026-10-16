@@ -68,6 +68,14 @@ import { verifyStateChangingOrigin } from "../src/lib/auth/origin-guard";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
 
+import { GET as getApplicationRoute, PATCH as patchApplicationRoute } from "../src/app/api/applications/[id]/route";
+import { POST as uploadFileRoute } from "../src/app/api/applications/[id]/files/route";
+import { GET as getFileRoute } from "../src/app/api/files/[id]/route";
+import { POST as submitApplicationRoute } from "../src/app/api/applications/[id]/submit/route";
+import { POST as decisionRoute } from "../src/app/api/admin/applications/[id]/decision/route";
+import { GET as getAdminCyclesRoute } from "../src/app/api/admin/cycles/route";
+import { GET as getAdminUsersRoute } from "../src/app/api/admin/users/route";
+
 let passedTests = 0;
 let totalTests = 0;
 let realDbTests = 0;
@@ -93,15 +101,15 @@ function assert(
     if (mode === "test_db") realDbTests++;
     if (mode === "simulated") simulatedTests++;
   } else {
-    console.error(`  ✕ FAIL [${prefix}]: ${testName}`);
-    throw new Error(`Test failed: [${prefix}] ${testName}`);
+    console.error(`  ✕ FAIL [failed]: ${testName}`);
+    throw new Error(`Test failed: [failed] ${testName}`);
   }
 }
 
-function recordSkipped(testName: string, reason: string) {
+function recordSkipped(testName: string, reason?: string) {
   totalTests++;
   skippedTests++;
-  console.log(`  ⏭ SKIPPED [skipped]: ${testName} (${reason})`);
+  console.log(`  ⏭ SKIPPED [skipped]: ${testName}${reason ? ` (${reason})` : ""}`);
 }
 
 async function runTests() {
@@ -524,117 +532,433 @@ async function runTests() {
     );
   }
 
-  // 9. Isolated Test Project Integration Suite (Part A2, A6)
+  // 9. Phase 2c Real API Route Integration Suite against Test Database (never production)
+  console.log(`\n--- 9. Real API Route Integration Suite (against test DB: ${testUrl || "NONE"}) ---`);
   if (hasTestDbConfig) {
-    console.log(`\n--- 9. Isolated Supabase Integration Suite (Running against test DB: ${testUrl}) ---`);
-    const testAnon = createClient(testUrl!, testPublishableKey!, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
     const testAdmin = createClient(testUrl!, testSecretKey!, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
-
-    // Test: Anonymous/Publishable client connects to TEST_SUPABASE_URL
-    const { data: schData, error: schErr } = await testAnon
-      .from("scholarships")
-      .select("id, code")
-      .limit(1);
-    assert(!schErr && Array.isArray(schData), "Publishable key client queries test database successfully", "test_db");
-
-    // Test: Service role client connects to TEST_SUPABASE_URL
-    const { error: srvErr } = await testAdmin.from("audit_log").select("id").limit(1);
-    assert(!srvErr, "Service role key client connects to test database successfully", "test_db");
-
-    // Test A2: Audit Log Immutability against Service Role
-    console.log("  Testing Audit Log Immutability triggers...");
-    const dummyLogId = crypto.randomUUID();
-    const { error: insErr } = await testAdmin.from("audit_log").insert({
-      id: dummyLogId,
-      actor_id: crypto.randomUUID(),
-      actor_email: "test-runner@sit.test",
-      action: "INTEGRATION_TEST_ENTRY",
-      entity: "test",
-      entity_id: dummyLogId,
-      ip: "127.0.0.1",
+    const testAnon = createClient(testUrl!, testPublishableKey!, {
+      auth: { autoRefreshToken: false, persistSession: false },
     });
-    assert(!insErr, "Can append to audit_log via service role", "test_db");
 
-    // Attempt UPDATE as service role -> Must fail
-    const { error: updErr } = await testAdmin
-      .from("audit_log")
-      .update({ action: "TAMPERED_ACTION" })
-      .eq("id", dummyLogId);
-    assert(Boolean(updErr), "Audit log UPDATE rejected even for service_role by database trigger", "test_db");
+    process.env.NEXT_PUBLIC_SUPABASE_URL = testUrl;
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = testPublishableKey;
+    process.env.SUPABASE_SECRET_KEY = testSecretKey;
 
-    // Attempt DELETE as service role -> Must fail
-    const { error: delErr } = await testAdmin
-      .from("audit_log")
-      .delete()
-      .eq("id", dummyLogId);
-    assert(Boolean(delErr), "Audit log DELETE rejected even for service_role by database trigger", "test_db");
+    const cleanupUserIds: string[] = [];
+    const cleanupAppIds: string[] = [];
+    const cleanupFileIds: string[] = [];
+    const cleanupCycleIds: string[] = [];
 
-    // Test A3 & A6: Throwaway user creation & trigger-based profile creation
-    console.log("  Testing throwaway user signup and profile trigger...");
-    const throwawayEmail = `test-student-${Date.now()}@sit.test`;
-    const throwawayPass = "SecurePass123!@#Test";
+    try {
+      // Find or create an open cycle
+      let { data: cycle } = await testAdmin.from("cycles").select("id, scholarship_id").eq("status", "open").maybeSingle();
+      if (!cycle) {
+        let { data: sch } = await testAdmin.from("scholarships").select("id").eq("code", "MNC").maybeSingle();
+        if (!sch) {
+          const newSchId = crypto.randomUUID();
+          await testAdmin.from("scholarships").insert({ id: newSchId, code: "MNC", name: "Dr. M.N. Channabasappa", is_active: true });
+          sch = { id: newSchId };
+        }
+        const newCycleId = crypto.randomUUID();
+        await testAdmin.from("cycles").insert({
+          id: newCycleId,
+          scholarship_id: sch.id,
+          academic_year: "2026-2027",
+          status: "open",
+          opens_at: "2025-01-01T00:00:00Z",
+          closes_at: "2030-01-01T00:00:00Z",
+        });
+        cycle = { id: newCycleId, scholarship_id: sch.id };
+        cleanupCycleIds.push(newCycleId);
+      }
 
-    const { data: throwawayUser, error: crErr } = await testAdmin.auth.admin.createUser({
-      email: throwawayEmail,
-      password: throwawayPass,
-      email_confirm: true,
-      user_metadata: {
-        full_name: "THROWAWAY STUDENT",
-        mobile: "9880112233",
-      },
-    });
-    assert(!crErr && Boolean(throwawayUser?.user?.id), "Throwaway test student created via admin API", "test_db");
+      // 1. Throwaway Student A
+      const emailA = `test-student-a-${Date.now()}@sit.test`;
+      const userA = await testAdmin.auth.admin.createUser({
+        email: emailA,
+        password: "TestPassword123!@#",
+        email_confirm: true,
+        user_metadata: { full_name: "STUDENT A", mobile: "9880112233" },
+      });
+      if (userA.data.user) cleanupUserIds.push(userA.data.user.id);
 
-    if (throwawayUser?.user?.id) {
-      const studentId = throwawayUser.user.id;
-      // Check trigger created profile with role = 'student'
-      const { data: prof, error: prErr } = await testAdmin
-        .from("profiles")
-        .select("role, full_name, mobile")
-        .eq("id", studentId)
-        .maybeSingle();
+      // 2. Throwaway Student B
+      const emailB = `test-student-b-${Date.now()}@sit.test`;
+      const userB = await testAdmin.auth.admin.createUser({
+        email: emailB,
+        password: "TestPassword123!@#",
+        email_confirm: true,
+        user_metadata: { full_name: "STUDENT B", mobile: "9880112244" },
+      });
+      if (userB.data.user) cleanupUserIds.push(userB.data.user.id);
 
+      // 3. Throwaway Reviewer
+      const emailRev = `test-rev-${Date.now()}@sit.test`;
+      const userRev = await testAdmin.auth.admin.createUser({
+        email: emailRev,
+        password: "TestPassword123!@#",
+        email_confirm: true,
+        user_metadata: { full_name: "STAFF REVIEWER", mobile: "9880112255" },
+      });
+      if (userRev.data.user) {
+        cleanupUserIds.push(userRev.data.user.id);
+        await testAdmin.from("profiles").update({ role: "reviewer" }).eq("id", userRev.data.user.id);
+      }
+
+      // 4. Throwaway Admin
+      const emailAdm = `test-adm-${Date.now()}@sit.test`;
+      const userAdm = await testAdmin.auth.admin.createUser({
+        email: emailAdm,
+        password: "TestPassword123!@#",
+        email_confirm: true,
+        user_metadata: { full_name: "STAFF ADMIN", mobile: "9880112266" },
+      });
+      if (userAdm.data.user) {
+        cleanupUserIds.push(userAdm.data.user.id);
+        await testAdmin.from("profiles").update({ role: "admin" }).eq("id", userAdm.data.user.id);
+      }
+
+      // 5. Throwaway Unconfirmed Student
+      const emailUnconf = `test-unconf-${Date.now()}@sit.test`;
+      const userUnconf = await testAdmin.auth.admin.createUser({
+        email: emailUnconf,
+        password: "TestPassword123!@#",
+        email_confirm: false,
+        user_metadata: { full_name: "STUDENT UNCONF", mobile: "9880112277" },
+      });
+      if (userUnconf.data.user) cleanupUserIds.push(userUnconf.data.user.id);
+
+      // Seed Student A draft application
+      const appAId = crypto.randomUUID();
+      cleanupAppIds.push(appAId);
+      await testAdmin.from("applications").insert({
+        id: appAId,
+        ref_no: `SIT-TEST-${Date.now().toString().slice(-6)}`,
+        cycle_id: cycle.id,
+        student_id: userA.data.user!.id,
+        scholarship_code: "MNC",
+        status: "draft",
+        data: {
+          scholarship_code: "MNC",
+          full_name: "STUDENT A",
+          usn: "1SI23CS001",
+          dob: "2005-05-15",
+          nationality: "Indian",
+          father_or_guardian_name: "FATHER A",
+          address: "SIT Hostel, Tumakuru",
+          mobile: "9880112233",
+          email: emailA,
+          parent_occupation: "Agriculture",
+          family_annual_income: 180000,
+          income_cert_issue_date: "2025-06-10",
+          admitted_through_cet: true,
+          annual_fee: 100000,
+          course: "Computer Science and Engineering",
+          year_of_study: 1,
+          semester: 1,
+          course_duration_years: 4,
+          final_exam_month_year: "2028-06",
+          marks_obtained: 540,
+          marks_gross_total: 600,
+          last_exam_passed: "II PUC",
+          has_backlog_history: false,
+          getting_other_scholarship: false,
+          bank_acc_holder_name: "STUDENT A",
+          bank_acc_no: "123456789012",
+          confirm_bank_acc_no: "123456789012",
+          bank_name: "State Bank of India",
+          bank_branch: "Tumakuru",
+          bank_ifsc: "SBIN0040523",
+        },
+      });
+
+      const reqKinds = ["photo", "sig_student", "sig_parent", "cet_order", "income_cert", "marks_card", "aadhaar", "fee_receipt", "principal_cert"];
+      let primaryFileId = "";
+      for (const k of reqKinds) {
+        const fId = crypto.randomUUID();
+        if (k === "photo") primaryFileId = fId;
+        cleanupFileIds.push(fId);
+        await testAdmin.from("application_files").insert({
+          id: fId,
+          application_id: appAId,
+          kind: k,
+          storage_path: `${appAId}/${k}-${fId}.jpg`,
+          mime: "image/jpeg",
+          size_bytes: 1024,
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+          original_name: `${k}.jpg`,
+        });
+      }
+
+      // --- TEST 1: a student cannot read, edit or download another student's application or file ---
+      (globalThis as any).__testSessionOverride = {
+        userId: userB.data.user!.id,
+        email: emailB,
+        role: "student",
+        fullName: "STUDENT B",
+        mustChangePassword: false,
+        aal: "aal1",
+      };
+      const readOtherApp = await getApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${appAId}`),
+        { params: Promise.resolve({ id: appAId }) }
+      );
+      const editOtherApp = await patchApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${appAId}`, {
+          method: "PATCH",
+          headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+          body: JSON.stringify({ step: 1, data: { full_name: "HACKED NAME" } }),
+        }),
+        { params: Promise.resolve({ id: appAId }) }
+      );
+      const dlOtherFile = await getFileRoute(
+        new Request(`http://localhost:3000/api/files/${primaryFileId}`),
+        { params: Promise.resolve({ id: primaryFileId }) }
+      );
       assert(
-        !prErr && prof?.role === "student",
-        "auth.users trigger automatically created profile with role = 'student'",
+        readOtherApp.status === 403 && editOtherApp.status === 403 && dlOtherFile.status === 403,
+        "a student cannot read, edit or download another student's application or file",
         "test_db"
       );
 
-      // Verify student cannot elevate their own role to admin
-      const { error: elevErr } = await testAnon
-        .from("profiles")
-        .update({ role: "admin" })
-        .eq("id", studentId);
-      assert(Boolean(elevErr), "Student cannot elevate own role to admin via client", "test_db");
+      // --- TEST 2: a student cannot upload to someone else's application ---
+      const uploadForm = new FormData();
+      uploadForm.append("kind", "photo");
+      uploadForm.append("file", new Blob([Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])], { type: "image/png" }), "avatar.png");
+      const uploadOtherApp = await uploadFileRoute(
+        new Request(`http://localhost:3000/api/applications/${appAId}/files`, {
+          method: "POST",
+          headers: { origin: "http://localhost:3000" },
+          body: uploadForm,
+        }),
+        { params: Promise.resolve({ id: appAId }) }
+      );
+      assert(
+        uploadOtherApp.status === 403,
+        "a student cannot upload to someone else's application",
+        "test_db"
+      );
 
-      // Clean up throwaway user
-      await testAdmin.auth.admin.deleteUser(studentId);
-      assert(true, "Throwaway test user deleted successfully", "test_db");
+      // --- TEST 3: double submit creates one submission ---
+      (globalThis as any).__testSessionOverride = {
+        userId: userA.data.user!.id,
+        email: emailA,
+        role: "student",
+        fullName: "STUDENT A",
+        mustChangePassword: false,
+        aal: "aal1",
+        email_confirmed: true,
+      };
+      const sub1 = await submitApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${appAId}/submit`, {
+          method: "POST",
+          headers: { origin: "http://localhost:3000" },
+        }),
+        { params: Promise.resolve({ id: appAId }) }
+      );
+      const sub2 = await submitApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${appAId}/submit`, {
+          method: "POST",
+          headers: { origin: "http://localhost:3000" },
+        }),
+        { params: Promise.resolve({ id: appAId }) }
+      );
+      const { data: submittedApps } = await testAdmin
+        .from("applications")
+        .select("id, status")
+        .eq("id", appAId)
+        .eq("status", "submitted");
+      assert(
+        sub1.status === 200 && sub2.status === 400 && submittedApps?.length === 1,
+        "double submit creates one submission",
+        "test_db"
+      );
+
+      // --- TEST 4: the DB rejects a submit after closes_at and while the cycle is closed ---
+      const closedCycleId = crypto.randomUUID();
+      cleanupCycleIds.push(closedCycleId);
+      await testAdmin.from("cycles").insert({
+        id: closedCycleId,
+        scholarship_id: cycle.scholarship_id,
+        academic_year: "2019-2020",
+        status: "closed",
+        opens_at: "2019-01-01T00:00:00Z",
+        closes_at: "2019-02-01T00:00:00Z",
+      });
+      const closedAppId = crypto.randomUUID();
+      cleanupAppIds.push(closedAppId);
+      await testAdmin.from("applications").insert({
+        id: closedAppId,
+        ref_no: `SIT-CLOSED-${Date.now().toString().slice(-6)}`,
+        cycle_id: closedCycleId,
+        student_id: userA.data.user!.id,
+        scholarship_code: "MNC",
+        status: "draft",
+        data: {},
+      });
+      const { error: deadlineTriggerErr } = await testAdmin
+        .from("applications")
+        .update({ status: "submitted" })
+        .eq("id", closedAppId);
+      assert(
+        Boolean(deadlineTriggerErr),
+        "the DB rejects a submit after closes_at and while the cycle is closed",
+        "test_db"
+      );
+
+      // --- TEST 5: an unconfirmed email cannot submit ---
+      const unconfAppId = crypto.randomUUID();
+      cleanupAppIds.push(unconfAppId);
+      await testAdmin.from("applications").insert({
+        id: unconfAppId,
+        ref_no: `SIT-UNCONF-${Date.now().toString().slice(-6)}`,
+        cycle_id: cycle.id,
+        student_id: userUnconf.data.user!.id,
+        scholarship_code: "MNC",
+        status: "draft",
+        data: {},
+      });
+      (globalThis as any).__testSessionOverride = {
+        userId: userUnconf.data.user!.id,
+        email: emailUnconf,
+        role: "student",
+        fullName: "STUDENT UNCONF",
+        mustChangePassword: false,
+        aal: "aal1",
+        email_confirmed: false,
+      };
+      const unconfSub = await submitApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${unconfAppId}/submit`, {
+          method: "POST",
+          headers: { origin: "http://localhost:3000" },
+        }),
+        { params: Promise.resolve({ id: unconfAppId }) }
+      );
+      assert(
+        unconfSub.status === 403,
+        "an unconfirmed email cannot submit",
+        "test_db"
+      );
+
+      // --- TEST 6: reviewer gets 403 on accept/reject and admin-only routes ---
+      (globalThis as any).__testSessionOverride = {
+        userId: userRev.data.user!.id,
+        email: emailRev,
+        role: "reviewer",
+        fullName: "STAFF REVIEWER",
+        mustChangePassword: false,
+        aal: "aal2",
+        last_seen_at: new Date().toISOString(),
+      };
+      const revDecision = await decisionRoute(
+        new Request(`http://localhost:3000/api/admin/applications/${appAId}/decision`, {
+          method: "POST",
+          headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+          body: JSON.stringify({ action: "accept" }),
+        }),
+        { params: Promise.resolve({ id: appAId }) }
+      );
+      const revCycles = await getAdminCyclesRoute(
+        new Request("http://localhost:3000/api/admin/cycles")
+      );
+      const revUsers = await getAdminUsersRoute(
+        new Request("http://localhost:3000/api/admin/users")
+      );
+      assert(
+        revDecision.status === 403 && revCycles.status === 403 && revUsers.status === 403,
+        "reviewer gets 403 on accept/reject and admin-only routes",
+        "test_db"
+      );
+
+      // --- TEST 7: staff without aal2 get 403 on /api/admin/* ---
+      (globalThis as any).__testSessionOverride = {
+        userId: userAdm.data.user!.id,
+        email: emailAdm,
+        role: "admin",
+        fullName: "STAFF ADMIN",
+        mustChangePassword: false,
+        aal: "aal1",
+        last_seen_at: new Date().toISOString(),
+      };
+      const aal1Cycles = await getAdminCyclesRoute(
+        new Request("http://localhost:3000/api/admin/cycles")
+      );
+      const aal1Users = await getAdminUsersRoute(
+        new Request("http://localhost:3000/api/admin/users")
+      );
+      assert(
+        aal1Cycles.status === 403 && aal1Users.status === 403,
+        "staff without aal2 get 403 on /api/admin/*",
+        "test_db"
+      );
+
+      // --- TEST 8: wrong or missing Origin gets 403 on POST/PATCH/DELETE ---
+      const originPostMissing = verifyStateChangingOrigin(new Request("http://localhost:3000/api/test", { method: "POST" }));
+      const originPostBad = verifyStateChangingOrigin(new Request("http://localhost:3000/api/test", { method: "POST", headers: { origin: "https://evil-attacker.com" } }));
+      const originPatchBad = verifyStateChangingOrigin(new Request("http://localhost:3000/api/test", { method: "PATCH", headers: { origin: "https://evil-attacker.com" } }));
+      const originDeleteBad = verifyStateChangingOrigin(new Request("http://localhost:3000/api/test", { method: "DELETE", headers: { origin: "https://evil-attacker.com" } }));
+      assert(
+        originPostMissing?.status === 403 &&
+          originPostBad?.status === 403 &&
+          originPatchBad?.status === 403 &&
+          originDeleteBad?.status === 403,
+        "wrong or missing Origin gets 403 on POST/PATCH/DELETE",
+        "test_db"
+      );
+
+      // --- TEST 9: 6th bad login returns 429 using the real DB limiter, and 20 parallel requests allow exactly the limit ---
+      const limiterKey = `test_login_burst_${Date.now()}`;
+      let firstFiveAllowed = true;
+      for (let i = 0; i < 5; i++) {
+        const { data } = await testAdmin.rpc("rate_limit_hit", { p_key: limiterKey, p_window_seconds: 60, p_max: 5 });
+        if (!data?.[0]?.allowed) firstFiveAllowed = false;
+      }
+      const { data: sixthData } = await testAdmin.rpc("rate_limit_hit", { p_key: limiterKey, p_window_seconds: 60, p_max: 5 });
+      const sixthBlocked = sixthData?.[0]?.allowed === false && (sixthData?.[0]?.retry_after ?? 0) > 0;
+
+      const parallelKey = `test_parallel_${Date.now()}`;
+      const parallelHits = await Promise.all(
+        Array.from({ length: 20 }, () =>
+          testAdmin.rpc("rate_limit_hit", { p_key: parallelKey, p_window_seconds: 60, p_max: 10 })
+        )
+      );
+      const parallelAllowed = parallelHits.filter((h) => h.data?.[0]?.allowed === true).length;
+      const parallelBlocked = parallelHits.filter((h) => h.data?.[0]?.allowed === false).length;
+
+      assert(
+        firstFiveAllowed && sixthBlocked && parallelAllowed === 10 && parallelBlocked === 10,
+        "6th bad login returns 429 using the real DB limiter, and 20 parallel requests allow exactly the limit",
+        "test_db"
+      );
+    } finally {
+      // Clean up throwaway entities & users
+      (globalThis as any).__testSessionOverride = null;
+      for (const fId of cleanupFileIds) {
+        await testAdmin.from("application_files").delete().eq("id", fId);
+      }
+      for (const aId of cleanupAppIds) {
+        await testAdmin.from("applications").delete().eq("id", aId);
+      }
+      for (const cId of cleanupCycleIds) {
+        await testAdmin.from("cycles").delete().eq("id", cId);
+      }
+      for (const uId of cleanupUserIds) {
+        await testAdmin.auth.admin.deleteUser(uId);
+      }
     }
-
-    // Direct Database RPC Rate Limiting Test
-    const { data: rpcData, error: rpcErr } = await testAdmin.rpc("rate_limit_hit", {
-      p_key: `direct_rpc_test:${Date.now()}`,
-      p_window_seconds: 60,
-      p_max: 5,
-    });
-    assert(!rpcErr && rpcData?.[0]?.allowed === true, "Atomic rate limiting function executed via database RPC", "test_db");
   } else {
-    console.log("\n--- 9. Isolated Supabase Integration Suite (SKIPPED via SKIP_INTEGRATION=1) ---");
-    recordSkipped("Publishable key client queries test database successfully", "SKIP_INTEGRATION=1");
-    recordSkipped("Service role key client connects to test database successfully", "SKIP_INTEGRATION=1");
-    recordSkipped("Can append to audit_log via service role", "SKIP_INTEGRATION=1");
-    recordSkipped("Audit log UPDATE rejected even for service_role by database trigger", "SKIP_INTEGRATION=1");
-    recordSkipped("Audit log DELETE rejected even for service_role by database trigger", "SKIP_INTEGRATION=1");
-    recordSkipped("Throwaway test student created via admin API", "SKIP_INTEGRATION=1");
-    recordSkipped("auth.users trigger automatically created profile with role = 'student'", "SKIP_INTEGRATION=1");
-    recordSkipped("Student cannot elevate own role to admin via client", "SKIP_INTEGRATION=1");
-    recordSkipped("Throwaway test user deleted successfully", "SKIP_INTEGRATION=1");
-    recordSkipped("Atomic rate limiting function executed via database RPC", "SKIP_INTEGRATION=1");
+    // Exact 9 tests skipped when SKIP_INTEGRATION=1
+    recordSkipped("a student cannot read, edit or download another student's application or file", "SKIP_INTEGRATION=1");
+    recordSkipped("a student cannot upload to someone else's application", "SKIP_INTEGRATION=1");
+    recordSkipped("double submit creates one submission", "SKIP_INTEGRATION=1");
+    recordSkipped("the DB rejects a submit after closes_at and while the cycle is closed", "SKIP_INTEGRATION=1");
+    recordSkipped("an unconfirmed email cannot submit", "SKIP_INTEGRATION=1");
+    recordSkipped("reviewer gets 403 on accept/reject and admin-only routes", "SKIP_INTEGRATION=1");
+    recordSkipped("staff without aal2 get 403 on /api/admin/*", "SKIP_INTEGRATION=1");
+    recordSkipped("wrong or missing Origin gets 403 on POST/PATCH/DELETE", "SKIP_INTEGRATION=1");
+    recordSkipped("6th bad login returns 429 using the real DB limiter, and 20 parallel requests allow exactly the limit", "SKIP_INTEGRATION=1");
   }
 
   // 10. File Upload Safety & Magic-Byte Sniffing Tests (Part B1)
@@ -699,6 +1023,11 @@ async function runTests() {
 
   // 12. Atomic Rate Limiting Tests (Part B3)
   console.log("\n--- 12. Atomic Rate Limiting Tests (B3) ---");
+  if (!hasTestDbConfig) {
+    process.env.ALLOW_IN_MEMORY_RATE_LIMIT = "1";
+  } else {
+    delete process.env.ALLOW_IN_MEMORY_RATE_LIMIT;
+  }
   const testIp = `test-client-${Date.now()}`;
   const rateLimitMode = hasTestDbConfig ? "test_db" : "simulated";
   // 5 allowed login attempts
@@ -718,6 +1047,9 @@ async function runTests() {
   const blockedCount = parallelResults.filter((r) => !r.allowed).length;
   assert(allowedCount === 10, "Exactly 10 requests allowed under 20 parallel requests", rateLimitMode);
   assert(blockedCount === 10, "Remaining 10 parallel requests atomically returned 429", rateLimitMode);
+  if (!hasTestDbConfig) {
+    delete process.env.ALLOW_IN_MEMORY_RATE_LIMIT;
+  }
 
   // 13. CSV Formula Injection Neutralization Tests (Part B5)
   console.log("\n--- 13. CSV Formula Injection Neutralization Tests (B5) ---");

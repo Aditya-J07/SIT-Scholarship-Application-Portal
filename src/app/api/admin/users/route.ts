@@ -8,7 +8,7 @@ import { verifyStateChangingOrigin } from "@/lib/auth/origin-guard";
 
 const ALLOWED_ROLES = new Set<UserRole>(["student", "reviewer", "admin"]);
 
-export async function GET() {
+export async function GET(request?: Request) {
   const { session, errorResponse } = await requireAdminSession({ allowReviewer: false });
   if (errorResponse) return errorResponse;
 

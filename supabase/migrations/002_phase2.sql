@@ -17,6 +17,9 @@ ALTER TABLE public.applications ADD CONSTRAINT applications_status_check
 
 -- 2. AUDIT LOG TRUNCATE & TAMPER PREVENTION
 -- Audit log has NO foreign keys to profiles or auth.users (stores plain UUIDs and email snapshot)
+DROP TRIGGER IF EXISTS trg_audit_log_truncate ON public.audit_log;
+DROP FUNCTION IF EXISTS public.prevent_audit_log_truncate();
+
 CREATE OR REPLACE FUNCTION public.prevent_audit_log_truncate()
 RETURNS trigger AS $$
 BEGIN
@@ -24,7 +27,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-DROP TRIGGER IF EXISTS trg_audit_log_truncate ON public.audit_log;
 CREATE TRIGGER trg_audit_log_truncate
 BEFORE TRUNCATE ON public.audit_log
 FOR EACH STATEMENT EXECUTE FUNCTION public.prevent_audit_log_truncate();
@@ -34,6 +36,9 @@ REVOKE TRUNCATE, UPDATE, DELETE ON public.audit_log FROM anon, authenticated, se
 
 -- 3. AUTOMATIC PROFILE CREATION TRIGGER ON AUTH.USERS INSERT
 -- Creates profile with role = 'student' hardcoded; copies full_name and mobile from raw_user_meta_data
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+DROP FUNCTION IF EXISTS public.handle_new_user();
+
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -63,12 +68,13 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- 4. ATOMIC RATE LIMITING FUNCTION
+DROP FUNCTION IF EXISTS public.rate_limit_hit(TEXT, INT, INT);
+
 CREATE OR REPLACE FUNCTION public.rate_limit_hit(
   p_key TEXT,
   p_window_seconds INT,
@@ -114,6 +120,11 @@ REVOKE EXECUTE ON FUNCTION public.rate_limit_hit(TEXT, INT, INT) FROM anon, auth
 GRANT EXECUTE ON FUNCTION public.rate_limit_hit(TEXT, INT, INT) TO service_role;
 
 -- 5. HARDENED SUBMISSION DEADLINE TRIGGER
+-- Handles both legacy 001 and fresh schema environments
+DROP TRIGGER IF EXISTS trg_check_application_submission_deadline ON public.applications;
+DROP FUNCTION IF EXISTS public.check_application_submission_deadline();
+DROP FUNCTION IF EXISTS check_application_submission_deadline();
+
 CREATE OR REPLACE FUNCTION public.check_application_submission_deadline()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -149,7 +160,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_check_application_submission_deadline ON public.applications;
 CREATE TRIGGER trg_check_application_submission_deadline
 BEFORE UPDATE ON public.applications
 FOR EACH ROW EXECUTE FUNCTION public.check_application_submission_deadline();
