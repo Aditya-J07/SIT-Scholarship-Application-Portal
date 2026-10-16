@@ -59,8 +59,9 @@ When initializing an empty Supabase project, execute the SQL migration scripts i
 1. **`supabase/migrations/001_init.sql`**: Provisions core tables (`profiles`, `scholarships`, `cycles`, `applications`, `application_files`, `remarks`, `audit_log`, `rate_limits`), indexes, RLS policies, and immutable append-only audit log triggers.
 2. **`supabase/migrations/002_phase2.sql`**: Applies Phase 2 security hardening, including canonical status constraints, statement-level truncate prevention, `auth.users` profile generation trigger, atomic `rate_limit_hit` function, and the hardened submission deadline trigger.
 3. **`supabase/migrations/003_phase2c.sql`**: Adds `last_seen_at` column to `public.profiles` for server-side staff idle timeout and creates `cleanup_expired_rate_limits()` stored procedure for cron rate limit row purging.
+4. **`supabase/migrations/004_fix_cleanup.sql`**: Replaces `cleanup_expired_rate_limits()` to explicitly purge on `public.rate_limits(expire_at)`.
 
-> **Note on Migration Order:** Migration scripts must be executed in order (`001_init.sql` → `002_phase2.sql` → `003_phase2c.sql`). Migration `002_phase2.sql` is idempotent with `DROP TRIGGER IF EXISTS` / `DROP FUNCTION IF EXISTS`. For a fresh single-step setup, you may alternatively execute [`supabase/schema.sql`](supabase/schema.sql), which contains the consolidated idempotent schema.
+> **Note on Migration Order:** Migration scripts must be executed in order (`001_init.sql` → `002_phase2.sql` → `003_phase2c.sql` → `004_fix_cleanup.sql`). For a fresh single-step setup, you may alternatively execute [`supabase/schema.sql`](supabase/schema.sql), which contains the consolidated idempotent schema.
 
 ### 4. Seed Initial Data
 - Populate `.env.local` with your Supabase credentials (see section below).
@@ -102,9 +103,11 @@ Create `.env.local` in the project root based on `.env.example`:
 | `ENCRYPTION_KEY_PREVIOUS` | Server Only | (Optional) Previous 32-byte base64 key during key rotation |
 | `NEXT_PUBLIC_APP_URL` | Browser & Server | Base URL of deployment (e.g. `http://localhost:3000` or production URL) |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | CLI Only | Required only when running `scripts/create-admin.ts` |
-| `TEST_SUPABASE_URL` | Test Only | Separate test Supabase project URL (must NOT equal production URL) |
+| `TEST_SUPABASE_URL` | Test Only | Separate test Supabase project URL (must NOT equal production URL unless local development guard is bypassed) |
 | `TEST_SUPABASE_PUBLISHABLE_KEY` | Test Only | Separate test Supabase publishable key |
 | `TEST_SUPABASE_SECRET_KEY` | Test Only | Separate test Supabase secret key |
+| `ALLOW_SAME_PROJECT_TEST` | Test Only | Set to 1 only while the single Supabase project holds no real data; remove before launch. Fails in `NODE_ENV=production`. |
+| `CRON_SECRET` | Server Only | Secret token securing `/api/cron/cleanup-rate-limits` daily invocation |
 
 Generate a 32-byte base64 encryption key using Node.js:
 ```bash
@@ -121,7 +124,7 @@ npm install
 
 # 2. Run automated test suite
 # If TEST_SUPABASE_* variables are configured, integration tests execute against the test database.
-# If TEST_SUPABASE_* variables are not provided, run with SKIP_INTEGRATION=1 to run unit tests:
+# In local development where test URL matches prod URL, pass ALLOW_SAME_PROJECT_TEST=1 (only while holding no real data; remove before launch):
 npm test                      # Requires TEST_SUPABASE_URL, TEST_SUPABASE_PUBLISHABLE_KEY, TEST_SUPABASE_SECRET_KEY
 SKIP_INTEGRATION=1 npm test   # Skips DB integration tests and runs all unit & simulated tests
 

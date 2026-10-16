@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { getAuthorizedSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { calculateMeritScore, calculatePercentage } from '@/lib/merit';
 import { evaluateEligibility } from '@/lib/eligibility';
@@ -11,9 +11,9 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
+  const { session, errorResponse } = await getAuthorizedSession();
+  if (errorResponse) {
+    return errorResponse;
   }
 
   const { id } = await params;
@@ -82,9 +82,9 @@ export async function PATCH(
   const originErr = verifyStateChangingOrigin(request);
   if (originErr) return originErr;
 
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
+  const { session, errorResponse } = await getAuthorizedSession();
+  if (errorResponse) {
+    return errorResponse;
   }
 
   const { id } = await params;

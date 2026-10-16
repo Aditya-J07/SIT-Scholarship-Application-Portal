@@ -31,13 +31,22 @@ const skipIntegration = process.env.SKIP_INTEGRATION === "1";
 
 const allowSameProject = process.env.ALLOW_SAME_PROJECT_TEST === "1";
 
+if (process.env.NODE_ENV === "production" && allowSameProject) {
+  console.error("\n==================================================================");
+  console.error("FATAL: ALLOW_SAME_PROJECT_TEST IS STRICTLY FORBIDDEN IN PRODUCTION");
+  console.error("==================================================================");
+  console.error("ALLOW_SAME_PROJECT_TEST=1 cannot be used when NODE_ENV=production.");
+  console.error("==================================================================\n");
+  process.exit(1);
+}
+
 if (testUrl && prodUrl && testUrl.trim() === prodUrl.trim() && !allowSameProject) {
   console.error("\n==================================================================");
   console.error("FATAL: TEST_SUPABASE_URL MATCHES NEXT_PUBLIC_SUPABASE_URL");
   console.error("==================================================================");
   console.error("Integration tests must run against a separate test Supabase project to protect real student data.");
   console.error("If this is a local development/test project and you intentionally want to run tests against it,");
-  console.error("pass ALLOW_SAME_PROJECT_TEST=1 (e.g. 'ALLOW_SAME_PROJECT_TEST=1 npm test').");
+  console.error("pass ALLOW_SAME_PROJECT_TEST=1 (only while the single Supabase project holds no real data; remove before launch).");
   console.error("==================================================================\n");
   process.exit(1);
 }
@@ -90,10 +99,12 @@ import crypto from "crypto";
 import { GET as getApplicationRoute, PATCH as patchApplicationRoute } from "../src/app/api/applications/[id]/route";
 import { POST as uploadFileRoute } from "../src/app/api/applications/[id]/files/route";
 import { GET as getFileRoute } from "../src/app/api/files/[id]/route";
+import { GET as getPdfRoute } from "../src/app/api/applications/[id]/pdf/route";
 import { POST as submitApplicationRoute } from "../src/app/api/applications/[id]/submit/route";
 import { POST as decisionRoute } from "../src/app/api/admin/applications/[id]/decision/route";
 import { GET as getAdminCyclesRoute } from "../src/app/api/admin/cycles/route";
 import { GET as getAdminUsersRoute } from "../src/app/api/admin/users/route";
+import { POST as loginRoute } from "../src/app/api/auth/login/route";
 import { resetAdminClient } from "../src/utils/supabase/admin";
 
 let passedTests = 0;
@@ -941,6 +952,45 @@ async function runTests() {
         "test_db"
       );
 
+      // --- TEST 7b: a staff member at aal1 gets 403 on /api/files/[id] and PDF route (no student data leak) ---
+      const aal1File = await getFileRoute(
+        new Request(`http://localhost:3000/api/files/${primaryFileId}`),
+        { params: Promise.resolve({ id: primaryFileId }) }
+      );
+      const aal1Pdf = await getPdfRoute(
+        new Request(`http://localhost:3000/api/applications/${appAId}/pdf`),
+        { params: Promise.resolve({ id: appAId }) }
+      );
+      assert(
+        aal1File.status === 403 && aal1Pdf.status === 403,
+        "a staff member at aal1 gets 403 on /api/files/[id] and PDF route (no student data leak)",
+        "test_db"
+      );
+
+      // --- TEST 7c: staff logging in sets last_seen_at so a returning staff member is not rejected as idle ---
+      const staleTime = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+      await testAdmin.from("profiles").update({ last_seen_at: staleTime }).eq("id", userAdm.data.user!.id);
+      
+      const admLoginRes = await loginRoute(
+        new Request("http://localhost:3000/api/auth/login", {
+          method: "POST",
+          headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+          body: JSON.stringify({ email: emailAdm, password: "TestPassword123!@#" }),
+        })
+      );
+      const { data: refreshedProfile } = await testAdmin
+        .from("profiles")
+        .select("last_seen_at")
+        .eq("id", userAdm.data.user!.id)
+        .single();
+      const refreshedMs = refreshedProfile?.last_seen_at ? new Date(refreshedProfile.last_seen_at).getTime() : 0;
+      const isRefreshedNow = (Date.now() - refreshedMs) < 15000;
+      assert(
+        admLoginRes.status === 200 && isRefreshedNow,
+        "staff logging in sets last_seen_at so returning staff is not rejected as idle",
+        "test_db"
+      );
+
       // --- TEST 8: wrong or missing Origin gets 403 on POST/PATCH/DELETE ---
       const originPostMissing = verifyStateChangingOrigin(new Request("http://localhost:3000/api/test", { method: "POST" }));
       const originPostBad = verifyStateChangingOrigin(new Request("http://localhost:3000/api/test", { method: "POST", headers: { origin: "https://evil-attacker.com" } }));
@@ -977,6 +1027,24 @@ async function runTests() {
       assert(
         firstFiveAllowed && sixthBlocked && parallelAllowed === 10 && parallelBlocked === 10,
         "6th bad login returns 429 using the real DB limiter, and 20 parallel requests allow exactly the limit",
+        "test_db"
+      );
+
+      // --- TEST 10: cleanup_expired_rate_limits() deletes expired rate limits using expire_at ---
+      const testExpiredKey = `test_cleanup_exp_${Date.now()}`;
+      await testAdmin.from("rate_limits").insert({
+        key: testExpiredKey,
+        points: 5,
+        expire_at: new Date(Date.now() - 60000).toISOString(),
+      });
+      const { data: purgedCount, error: purgeErr } = await testAdmin.rpc("cleanup_expired_rate_limits");
+      const { data: leftoverExpired } = await testAdmin
+        .from("rate_limits")
+        .select("key")
+        .eq("key", testExpiredKey);
+      assert(
+        !purgeErr && typeof purgedCount === "number" && purgedCount >= 1 && leftoverExpired?.length === 0,
+        "cleanup_expired_rate_limits() deletes WHERE expire_at < now() and purges expired entries",
         "test_db"
       );
     } finally {

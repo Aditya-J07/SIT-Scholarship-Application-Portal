@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { getAuthorizedSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { storage } from '@/lib/storage';
 import { getClientIp } from '@/lib/rate-limit';
@@ -8,9 +8,9 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
+  const { session, errorResponse } = await getAuthorizedSession();
+  if (errorResponse) {
+    return errorResponse;
   }
 
   const { id: fileId } = await params;

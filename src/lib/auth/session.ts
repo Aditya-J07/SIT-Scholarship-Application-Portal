@@ -22,7 +22,8 @@ export interface SessionPayload {
  */
 export async function getCurrentSession(): Promise<SessionPayload | null> {
   if (process.env.NODE_ENV !== "production" && (globalThis as any).__testSessionOverride) {
-    return (globalThis as any).__testSessionOverride;
+    const override = (globalThis as any).__testSessionOverride;
+    return override;
   }
 
   try {
@@ -72,6 +73,84 @@ export async function getCurrentSession(): Promise<SessionPayload | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Enforces staff security requirements:
+ * 1. 30-minute idle session timeout via last_seen_at (returns 401 IDLE_TIMEOUT)
+ * 2. Authenticator Assurance Level 2 (TOTP verified) (returns 403 MFA_REQUIRED)
+ * Returns null if compliant or if caller is a student.
+ */
+export function enforceStaffSession(session: SessionPayload): NextResponse | null {
+  if (session.role === "admin" || session.role === "reviewer") {
+    // 1. Enforce 30-minute server-side idle timeout for staff accounts
+    if (session.last_seen_at) {
+      const lastSeenMs = new Date(session.last_seen_at).getTime();
+      const idleMinutes = (Date.now() - lastSeenMs) / (1000 * 60);
+      if (idleMinutes > 30) {
+        return NextResponse.json(
+          {
+            code: "IDLE_TIMEOUT",
+            error: {
+              message: "Staff session timed out due to 30 minutes of inactivity. Please log in again.",
+            },
+          },
+          { status: 401 }
+        );
+      }
+    }
+
+    // 2. Enforce TOTP MFA (aal2) for staff accounts: staff at aal1 get zero student or admin data
+    if (session.aal !== "aal2") {
+      return NextResponse.json(
+        {
+          code: "MFA_REQUIRED",
+          error: {
+            message: "Multi-factor authentication (TOTP) verification is required for staff access.",
+          },
+        },
+        { status: 403 }
+      );
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Shared session helper for all protected routes (student & staff).
+ * Validates the session, enforces staff idle & aal2 constraints,
+ * and updates staff last_seen_at timestamp on active requests.
+ */
+export async function getAuthorizedSession(): Promise<
+  { session: SessionPayload; errorResponse: null } | { session: null; errorResponse: NextResponse }
+> {
+  const session = await getCurrentSession();
+  if (!session) {
+    return {
+      session: null,
+      errorResponse: NextResponse.json(
+        { error: { message: "Unauthorized" } },
+        { status: 401 }
+      ),
+    };
+  }
+
+  const staffSecurityError = enforceStaffSession(session);
+  if (staffSecurityError) {
+    return { session: null, errorResponse: staffSecurityError };
+  }
+
+  // Update staff last_seen timestamp on valid active request
+  if (session.role === "admin" || session.role === "reviewer") {
+    try {
+      await db.updateStaffLastSeen(session.userId);
+    } catch {
+      // Non-fatal if DB activity write fails
+    }
+  }
+
+  return { session, errorResponse: null };
 }
 
 /**

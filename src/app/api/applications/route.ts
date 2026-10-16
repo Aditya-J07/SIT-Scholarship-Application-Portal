@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { getAuthorizedSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { ApplicationRecord } from '@/lib/types';
 import { calculateMeritScore } from '@/lib/merit';
@@ -17,9 +17,9 @@ function generateUnambiguousRefNo(scholarshipCode: string, year: number): string
 }
 
 export async function GET() {
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
+  const { session, errorResponse } = await getAuthorizedSession();
+  if (errorResponse) {
+    return errorResponse;
   }
 
   if (session.role === 'student') {
@@ -41,9 +41,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
+  const { session, errorResponse } = await getAuthorizedSession();
+  if (errorResponse) {
+    return errorResponse;
   }
 
   try {

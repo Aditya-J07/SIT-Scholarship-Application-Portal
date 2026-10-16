@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { getAuthorizedSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { generateApplicationPdf } from '@/lib/pdf/generatePdf';
 import { storage } from '@/lib/storage';
@@ -9,9 +9,9 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
+  const { session, errorResponse } = await getAuthorizedSession();
+  if (errorResponse) {
+    return errorResponse;
   }
 
   // Rate limit: 10 PDF generations per hour per user

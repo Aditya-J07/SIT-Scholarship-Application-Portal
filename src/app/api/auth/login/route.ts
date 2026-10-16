@@ -78,6 +78,10 @@ export async function POST(request: Request) {
       );
     }
 
+    if (profile.role === "admin" || profile.role === "reviewer") {
+      await db.updateStaffLastSeen(profile.id);
+    }
+
     await db.logAudit({
       actor_id: profile.id,
       actor_email: profile.email,
