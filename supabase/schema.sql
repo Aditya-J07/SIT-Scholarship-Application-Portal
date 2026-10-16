@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     bank_name TEXT,
     bank_branch TEXT,
     bank_ifsc TEXT,
-    last_seen_at TIMESTAMPTZ,   -- Staff session activity tracker for 30-min idle timeout
+    last_seen_at TIMESTAMPTZ,          -- Staff session activity tracker for 30-min idle timeout
+    consent_accepted_at TIMESTAMPTZ,   -- DPDP Act 2023 Consent timestamp
+    consent_version TEXT,              -- Privacy policy version consented to
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -55,9 +57,9 @@ CREATE TABLE IF NOT EXISTS public.cycles (
     id TEXT PRIMARY KEY,
     scholarship_id TEXT NOT NULL REFERENCES public.scholarships(id) ON DELETE CASCADE,
     academic_year TEXT NOT NULL, -- e.g. "2026-2027"
-    opens_at TIMESTAMPTZ NOT NULL,
-    closes_at TIMESTAMPTZ NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('open', 'closed', 'upcoming')) DEFAULT 'open',
+    opens_at TIMESTAMPTZ,        -- NULL until confirmed and activated by Accounts Section
+    closes_at TIMESTAMPTZ,       -- NULL until confirmed and activated by Accounts Section
+    status TEXT NOT NULL CHECK (status IN ('open', 'closed', 'upcoming')) DEFAULT 'closed',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -261,8 +263,9 @@ BEGIN
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.rate_limit_hit(TEXT, INT, INT) FROM anon, authenticated;
+REVOKE ALL ON FUNCTION public.rate_limit_hit(TEXT, INT, INT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.rate_limit_hit(TEXT, INT, INT) TO service_role;
+ALTER FUNCTION public.rate_limit_hit(TEXT, INT, INT) SET search_path = '';
 
 -- Expired Rate Limits Cleanup Function
 CREATE OR REPLACE FUNCTION public.cleanup_expired_rate_limits()
@@ -280,11 +283,12 @@ BEGIN
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.cleanup_expired_rate_limits() FROM anon, authenticated;
+REVOKE ALL ON FUNCTION public.cleanup_expired_rate_limits() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.cleanup_expired_rate_limits() TO service_role;
+ALTER FUNCTION public.cleanup_expired_rate_limits() SET search_path = '';
 
 -- ------------------------------------------------------------------------------
--- 9. ROW LEVEL SECURITY (RLS) POLICIES
+-- 9. ROW LEVEL SECURITY (RLS) POLICIES & SCHEMA LOCKDOWN
 -- ------------------------------------------------------------------------------
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.scholarships ENABLE ROW LEVEL SECURITY;
@@ -295,17 +299,18 @@ ALTER TABLE public.remarks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.rate_limits ENABLE ROW LEVEL SECURITY;
 
--- Profiles policies
+-- Remove direct table and sequence access for anon and authenticated (005_lockdown)
+-- Application reads and writes execute exclusively server-side via service_role.
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
+
+-- Profiles read policy
 CREATE POLICY "Users can view their own profile"
     ON public.profiles FOR SELECT
     TO authenticated
     USING (auth.uid() = id);
-
-CREATE POLICY "Users can update their own non-role profile fields"
-    ON public.profiles FOR UPDATE
-    TO authenticated
-    USING (auth.uid() = id)
-    WITH CHECK (auth.uid() = id);
 
 -- Scholarships policies (publicly viewable active scholarships)
 CREATE POLICY "Anyone can view active scholarships"
@@ -319,38 +324,17 @@ CREATE POLICY "Anyone can view academic cycles"
     TO anon, authenticated
     USING (true);
 
--- Applications policies
+-- Applications read policy
 CREATE POLICY "Students can view their own applications"
     ON public.applications FOR SELECT
     TO authenticated
     USING (auth.uid() = student_id);
 
-CREATE POLICY "Students can create applications for themselves"
-    ON public.applications FOR INSERT
-    TO authenticated
-    WITH CHECK (auth.uid() = student_id);
-
-CREATE POLICY "Students can update their own draft applications"
-    ON public.applications FOR UPDATE
-    TO authenticated
-    USING (auth.uid() = student_id)
-    WITH CHECK (auth.uid() = student_id);
-
--- Application files policies
+-- Application files read policy
 CREATE POLICY "Students can view their own application files"
     ON public.application_files FOR SELECT
     TO authenticated
     USING (
-        EXISTS (
-            SELECT 1 FROM public.applications a
-            WHERE a.id = application_files.application_id AND a.student_id = auth.uid()
-        )
-    );
-
-CREATE POLICY "Students can upload their own application files"
-    ON public.application_files FOR INSERT
-    TO authenticated
-    WITH CHECK (
         EXISTS (
             SELECT 1 FROM public.applications a
             WHERE a.id = application_files.application_id AND a.student_id = auth.uid()
@@ -434,16 +418,17 @@ VALUES
     'cycle_mnc_2026',
     'sch_mnc',
     '2026-2027',
-    '2026-09-01T00:00:00Z', -- TODO: Confirm official notification date
-    '2026-12-31T23:59:59Z', -- TODO: Confirm official last submission date with Accounts Section
-    'open'
+    NULL, -- Official opening circular date to be confirmed by Accounts Section
+    NULL, -- Official last submission date to be confirmed by Accounts Section
+    'closed'
 ),
 (
     'cycle_sska_2026',
     'sch_sska',
     '2026-2027',
-    '2026-09-01T00:00:00Z',
-    '2026-12-31T23:59:59Z',
-    'open'
+    NULL,
+    NULL,
+    'closed'
 )
 ON CONFLICT (id) DO NOTHING;
+

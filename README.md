@@ -60,8 +60,10 @@ When initializing an empty Supabase project, execute the SQL migration scripts i
 2. **`supabase/migrations/002_phase2.sql`**: Applies Phase 2 security hardening, including canonical status constraints, statement-level truncate prevention, `auth.users` profile generation trigger, atomic `rate_limit_hit` function, and the hardened submission deadline trigger.
 3. **`supabase/migrations/003_phase2c.sql`**: Adds `last_seen_at` column to `public.profiles` for server-side staff idle timeout and creates `cleanup_expired_rate_limits()` stored procedure for cron rate limit row purging.
 4. **`supabase/migrations/004_fix_cleanup.sql`**: Replaces `cleanup_expired_rate_limits()` to explicitly purge on `public.rate_limits(expire_at)`.
+5. **`supabase/migrations/005_lockdown.sql`**: Revokes all table and sequence grants from `anon` and `authenticated` roles to block direct PostgREST attacks, secures `rate_limit_hit` and `cleanup_expired_rate_limits` RPCs to `service_role`, and sets `search_path = ''`.
+6. **`supabase/migrations/006_consent.sql`**: Adds `consent_accepted_at` and `consent_version` to `public.profiles` for DPDP Act compliance, and alters `cycles.opens_at` and `closes_at` to allow nulls.
 
-> **Note on Migration Order:** Migration scripts must be executed in order (`001_init.sql` → `002_phase2.sql` → `003_phase2c.sql` → `004_fix_cleanup.sql`). For a fresh single-step setup, you may alternatively execute [`supabase/schema.sql`](supabase/schema.sql), which contains the consolidated idempotent schema.
+> **Note on Migration Order:** Migration scripts must be executed in numerical sequence (`001` → `002` → `003` → `004` → `005` → `006`). For a fresh single-step setup, you may alternatively execute [`supabase/schema.sql`](supabase/schema.sql), which contains the consolidated idempotent schema.
 
 ### 4. Seed Initial Data
 - Populate `.env.local` with your Supabase credentials (see section below).
@@ -108,6 +110,8 @@ Create `.env.local` in the project root based on `.env.example`:
 | `TEST_SUPABASE_SECRET_KEY` | Test Only | Separate test Supabase secret key |
 | `ALLOW_SAME_PROJECT_TEST` | Test Only | Set to 1 only while the single Supabase project holds no real data; remove before launch. Fails in `NODE_ENV=production`. |
 | `CRON_SECRET` | Server Only | Secret token securing `/api/cron/cleanup-rate-limits` daily invocation |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Browser | Cloudflare Turnstile Site Key for CAPTCHA verification |
+| `TURNSTILE_SECRET_KEY` | Server Only | Cloudflare Turnstile Secret Key for server-side token validation |
 
 Generate a 32-byte base64 encryption key using Node.js:
 ```bash

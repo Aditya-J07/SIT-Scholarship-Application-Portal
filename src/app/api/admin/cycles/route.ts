@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth/admin-guard';
 import { db } from '@/lib/db';
 import { AcademicCycle } from '@/lib/types';
+import { getClientIp } from '@/lib/rate-limit';
 import crypto from 'crypto';
 
 export async function GET(request?: Request) {
@@ -32,7 +33,7 @@ export async function POST(request: Request) {
 
     await db.createCycle(cycle);
 
-    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+    const clientIp = getClientIp(request);
 
     await db.logAudit({
       actor_id: session.userId,
@@ -66,7 +67,7 @@ export async function PUT(request: Request) {
       ...(status && { status }),
     });
 
-    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+    const clientIp = getClientIp(request);
 
     await db.logAudit({
       actor_id: session.userId,

@@ -1,5 +1,15 @@
 import { NextResponse } from 'next/server';
 import { getAdminClient } from '@/utils/supabase/admin';
+import crypto from 'crypto';
+
+function isAuthorizedCron(authHeader: string | null, cronSecret: string | undefined): boolean {
+  if (!authHeader || !cronSecret) return false;
+  const expected = `Bearer ${cronSecret}`;
+  const headerBuf = Buffer.from(authHeader);
+  const expectedBuf = Buffer.from(expected);
+  if (headerBuf.length !== expectedBuf.length) return false;
+  return crypto.timingSafeEqual(headerBuf, expectedBuf);
+}
 
 /**
  * Vercel Cron handler for cleaning up expired rate limit entries.
@@ -9,7 +19,7 @@ async function handleCleanup(request: Request) {
   const authHeader = request.headers.get('authorization');
   const cronSecret = process.env.CRON_SECRET;
 
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+  if (!isAuthorizedCron(authHeader, cronSecret)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

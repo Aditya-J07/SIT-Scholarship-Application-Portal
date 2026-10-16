@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyStateChangingOrigin } from "@/lib/auth/origin-guard";
+import { verifyTurnstileToken } from "@/lib/auth/turnstile";
 import { db } from "@/lib/db";
 
 export async function POST(request: Request) {
@@ -19,7 +20,16 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { email } = body;
+    const { email, turnstileToken } = body;
+
+    // Turnstile verification
+    const turnstileResult = await verifyTurnstileToken(turnstileToken, clientIp);
+    if (!turnstileResult.success) {
+      return NextResponse.json(
+        { error: { message: turnstileResult.message || "CAPTCHA verification failed" } },
+        { status: 400 }
+      );
+    }
 
     if (!email || typeof email !== "string") {
       return NextResponse.json(

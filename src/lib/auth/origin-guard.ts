@@ -18,18 +18,22 @@ export function verifyStateChangingOrigin(request: Request): NextResponse | null
     );
   }
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || (process.env.NODE_ENV !== "production" ? "http://localhost:3000" : "");
   const allowedOrigins: string[] = [];
 
-  try {
-    const parsedSite = new URL(siteUrl).origin;
-    allowedOrigins.push(parsedSite);
-  } catch {
-    // fallback
+  if (siteUrl) {
+    try {
+      const parsedSite = new URL(siteUrl).origin;
+      allowedOrigins.push(parsedSite);
+    } catch {
+      // fallback
+    }
   }
 
-  // Development convenience
-  allowedOrigins.push("http://localhost:3000", "http://127.0.0.1:3000");
+  // Development convenience - only allowed when not in production
+  if (process.env.NODE_ENV !== "production") {
+    allowedOrigins.push("http://localhost:3000", "http://127.0.0.1:3000");
+  }
 
   if (!allowedOrigins.includes(origin)) {
     return NextResponse.json(

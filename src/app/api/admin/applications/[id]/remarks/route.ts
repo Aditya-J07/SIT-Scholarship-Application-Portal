@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdminOrReviewer } from '@/lib/auth/admin-guard';
 import { db } from '@/lib/db';
+import { getClientIp } from '@/lib/rate-limit';
 import crypto from 'crypto';
 
 export async function POST(
@@ -35,7 +36,7 @@ export async function POST(
       created_at: new Date().toISOString(),
     });
 
-    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+    const clientIp = getClientIp(request);
 
     await db.logAudit({
       actor_id: session.userId,

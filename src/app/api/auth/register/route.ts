@@ -9,6 +9,8 @@ import {
   rateLimitUnavailableResponse,
 } from "@/lib/rate-limit";
 import { verifyStateChangingOrigin } from "@/lib/auth/origin-guard";
+import { verifyTurnstileToken } from "@/lib/auth/turnstile";
+import { getAdminClient } from "@/utils/supabase/admin";
 
 export async function POST(request: Request) {
   // 1. CSRF Origin Verification
@@ -17,18 +19,18 @@ export async function POST(request: Request) {
 
   const clientIp = getClientIp(request);
 
-  // 2. Atomic Rate Limiting: 5 per hour per IP (fail closed with 503 if DB limiter fails)
-  const rateLimit = await checkRateLimit(`register:ip:${clientIp}`, 3600, 5);
-  if (rateLimit.dbUnavailable) {
+  // 2. Campus-friendly Rate Limiting: 30 per hour per IP (supports multiple students on campus/hostel Wi-Fi)
+  const ipLimit = await checkRateLimit(`register:ip:${clientIp}`, 3600, 30);
+  if (ipLimit.dbUnavailable) {
     return rateLimitUnavailableResponse();
   }
-  if (!rateLimit.allowed) {
-    return rateLimitResponse(rateLimit.retryAfter);
+  if (!ipLimit.allowed) {
+    return rateLimitResponse(ipLimit.retryAfter);
   }
 
   try {
     const body = await request.json();
-    const { full_name, email, mobile, password, consent_accepted } = body;
+    const { full_name, email, mobile, password, consent_accepted, turnstileToken } = body;
 
     if (!full_name || !email || !mobile || !password) {
       return NextResponse.json(
@@ -45,6 +47,24 @@ export async function POST(request: Request) {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+
+    // 3. Turnstile CAPTCHA Verification
+    const turnstileResult = await verifyTurnstileToken(turnstileToken, clientIp);
+    if (!turnstileResult.success) {
+      return NextResponse.json(
+        { error: { message: turnstileResult.message || "CAPTCHA verification failed" } },
+        { status: 400 }
+      );
+    }
+
+    // 4. Rate limiting: 3 per hour per email address
+    const emailLimit = await checkRateLimit(`register:email:${normalizedEmail}`, 3600, 3);
+    if (emailLimit.dbUnavailable) {
+      return rateLimitUnavailableResponse();
+    }
+    if (!emailLimit.allowed) {
+      return rateLimitResponse(emailLimit.retryAfter);
+    }
 
     // Enforce institutional password policy
     const policyResult = validatePasswordStrength(password, {
@@ -81,14 +101,27 @@ export async function POST(request: Request) {
     if (signUpError) {
       console.warn("[Register] signUp message:", signUpError.message);
     } else if (authData.user?.id) {
-      const clientIp = request.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
+      // Record consent acceptance in profiles table per DPDP compliance (M7)
+      try {
+        const admin = getAdminClient();
+        await admin
+          .from("profiles")
+          .update({
+            consent_accepted_at: new Date().toISOString(),
+            consent_version: "2026-v1",
+          })
+          .eq("id", authData.user.id);
+      } catch (consentErr) {
+        console.warn("[Register] Failed to record consent timestamp:", consentErr);
+      }
+
       await db.logAudit({
         actor_id: authData.user.id,
         actor_email: normalizedEmail,
         action: "USER_REGISTERED",
         entity: "profiles",
         entity_id: authData.user.id,
-        meta: { role: "student" },
+        meta: { role: "student", consent_version: "2026-v1" },
         ip: clientIp,
       });
     }

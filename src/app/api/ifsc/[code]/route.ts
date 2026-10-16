@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { getAuthorizedSession } from '@/lib/auth/session';
 import { checkRateLimit, getClientIp, rateLimitResponse } from '@/lib/rate-limit';
 
 // Bounded in-memory cache for IFSC lookups (capped at 500 entries)
@@ -10,14 +10,9 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ code: string }> }
 ) {
-  // 1. Require authenticated session
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json(
-      { error: { message: 'Authentication required to query IFSC details.' } },
-      { status: 401 }
-    );
-  }
+  // 1. Require authorized session (H2)
+  const { session, errorResponse } = await getAuthorizedSession();
+  if (errorResponse) return errorResponse;
 
   // 2. Rate limit: 30 requests per minute per IP
   const clientIp = getClientIp(request);

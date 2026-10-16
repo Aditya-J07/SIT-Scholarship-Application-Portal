@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { getAuthorizedSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { maskBankAccount } from '@/lib/crypto/encryption';
+import { getClientIp } from '@/lib/rate-limit';
 
 export async function GET() {
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
-  }
+  const { session, errorResponse } = await getAuthorizedSession();
+  if (errorResponse) return errorResponse;
 
   const profile = await db.findUserById(session.userId);
   if (!profile) {
@@ -23,10 +22,8 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
-  }
+  const { session, errorResponse } = await getAuthorizedSession();
+  if (errorResponse) return errorResponse;
 
   try {
     const body = await request.json();
@@ -42,7 +39,7 @@ export async function PUT(request: Request) {
       bank_ifsc: bank_ifsc?.trim().toUpperCase(),
     });
 
-    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+    const clientIp = getClientIp(request);
 
     await db.logAudit({
       actor_id: session.userId,

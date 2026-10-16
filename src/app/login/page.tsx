@@ -11,7 +11,32 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
+
+  const handleResendConfirmation = async () => {
+    if (!email) {
+      setError("Please enter your email address in the field above first.");
+      return;
+    }
+    setError(null);
+    setInfoMessage(null);
+    setResending(true);
+    try {
+      const res = await fetch("/api/auth/resend-confirmation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      setResending(false);
+      setInfoMessage(data.message || "If your email is unconfirmed, a verification link has been sent.");
+    } catch {
+      setResending(false);
+      setError("Network error. Please try again.");
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -75,6 +100,12 @@ export default function LoginPage() {
           </div>
         )}
 
+        {infoMessage && (
+          <div className="mb-4 bg-blue-50 border border-blue-300 p-2.5 text-xs text-blue-800 font-medium" role="status">
+            {infoMessage}
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
           <div>
             <label className="block font-bold text-gray-700 mb-1" htmlFor="login-email">
@@ -119,11 +150,23 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <div className="mt-5 text-center text-xs text-gray-600 border-t border-gray-200 pt-4">
-          {t.no_account}{' '}
-          <Link href="/register" className="font-bold text-[#AC3D47] hover:underline">
-            {t.register_link}
-          </Link>
+        <div className="mt-5 text-center text-xs text-gray-600 border-t border-gray-200 pt-4 space-y-2">
+          <div>
+            {t.no_account}{' '}
+            <Link href="/register" className="font-bold text-[#AC3D47] hover:underline">
+              {t.register_link}
+            </Link>
+          </div>
+          <div>
+            <button
+              type="button"
+              onClick={handleResendConfirmation}
+              disabled={resending}
+              className="text-[#AC3D47] hover:underline font-semibold disabled:opacity-50"
+            >
+              {resending ? "Sending verification email..." : "Resend confirmation email"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

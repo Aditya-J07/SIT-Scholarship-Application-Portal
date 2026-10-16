@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireAdminSession } from '@/lib/auth/admin-guard';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
+import { checkRateLimit, rateLimitResponse, getClientIp } from '@/lib/rate-limit';
 import { db } from '@/lib/db';
 import JSZip from 'jszip';
 import { storage } from '@/lib/storage';
@@ -48,7 +48,7 @@ export async function GET(request: Request) {
     apps = apps.filter((a) => a.status === status);
   }
 
-  const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+  const clientIp = getClientIp(request);
 
   // Audit every export operation
   await db.logAudit({
@@ -112,7 +112,7 @@ export async function GET(request: Request) {
       cell(a.data.family_annual_income || ''),
       cell(a.data.annual_fee || ''),
       cell(a.data.scholarship_amount_required_per_month || ''),
-      cell(a.data.bank_acc_no ? maskBankAccount(a.data.bank_acc_no) : ''),
+      cell(a.data.bank_acc_last4 ? `XXXX${a.data.bank_acc_last4}` : (a.data.bank_acc_no ? maskBankAccount(a.data.bank_acc_no) : '')),
       cell(a.data.bank_name || ''),
       cell(a.data.bank_ifsc || ''),
       cell(a.submitted_at ? new Date(a.submitted_at).toLocaleDateString('en-IN') : ''),

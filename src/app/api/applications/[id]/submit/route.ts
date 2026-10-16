@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { getAuthorizedSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { fullApplicationSchema } from '@/lib/schemas/application';
 import { evaluateEligibility } from '@/lib/eligibility';
@@ -9,15 +9,15 @@ import { generateApplicationPdf } from '@/lib/pdf/generatePdf';
 import { sendNotification } from '@/lib/notifications';
 import { storage } from '@/lib/storage';
 import { ApplicationFormData, ApplicationFileRecord } from '@/lib/types';
+import { getClientIp } from '@/lib/rate-limit';
+import { decryptBankAccount, encryptBankAccount } from '@/lib/crypto/field-encryption';
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
-  }
+  const { session, errorResponse } = await getAuthorizedSession();
+  if (errorResponse) return errorResponse;
 
   const { id } = await params;
   const application = await db.findApplicationById(id);
@@ -25,7 +25,8 @@ export async function POST(
     return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
   }
 
-  if (session.role === 'student' && application.student_id !== session.userId) {
+  // Ownership check: ONLY the owning student can submit an application (H2)
+  if (session.role !== 'student' || application.student_id !== session.userId) {
     return NextResponse.json({ error: { message: 'Forbidden' } }, { status: 403 });
   }
 
@@ -37,13 +38,13 @@ export async function POST(
     );
   }
 
-  // Check verified email confirmation status from Supabase Auth
+  // Check verified email confirmation status from Supabase Auth (Fail closed per M10)
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const isConfirmed = user ? Boolean(user.email_confirmed_at) : (session as any).email_confirmed !== false;
+  const isConfirmed = Boolean(user?.email_confirmed_at);
 
   if (!isConfirmed) {
     return NextResponse.json(
@@ -98,8 +99,14 @@ export async function POST(
   }
 
   try {
-    // 1. Validate full form data with strict Zod schema
-    const validationResult = fullApplicationSchema.safeParse(application.data);
+    // 1. Validate full form data with strict Zod schema (decrypt bank details if already stored encrypted)
+    const rawData = { ...application.data };
+    if (rawData.bank_acc_no_encrypted && !rawData.bank_acc_no) {
+      rawData.bank_acc_no = decryptBankAccount(rawData.bank_acc_no_encrypted);
+      rawData.confirm_bank_acc_no = rawData.bank_acc_no;
+    }
+
+    const validationResult = fullApplicationSchema.safeParse(rawData);
     if (!validationResult.success) {
       const firstError = validationResult.error.issues[0];
       return NextResponse.json(
@@ -170,7 +177,7 @@ export async function POST(
 
     const merit_score = calculateMeritScore(validatedData);
 
-    // 4. Generate Official Server-Side Final PDF
+    // 4. Generate Official Server-Side Final PDF (full decrypted bank number included in signed form per H1)
     const updatedApplicationObj = {
       ...application,
       data: validatedData,
@@ -189,18 +196,37 @@ export async function POST(
       { isDraft: false }
     );
 
-    // M9: Versioned PDF saving. If cloud storage upload fails, abort and leave as draft!
-    const version = application.pdf_path ? 'v2' : 'v1';
+    // M10: Versioned PDF saving. Increment version N so previous submissions are never overwritten
+    let nextVersionNum = 1;
+    if (application.pdf_path) {
+      const match = application.pdf_path.match(/final-v(\d+)\.pdf/);
+      if (match) {
+        nextVersionNum = parseInt(match[1], 10) + 1;
+      } else {
+        nextVersionNum = 2;
+      }
+    }
+    const version = `v${nextVersionNum}`;
     const pdfFileName = `${application.id}/final-${version}.pdf`;
 
     await storage.saveFile(pdfFileName, pdfBuffer, 'application/pdf');
 
-    // 5. Update Application Record in DB only AFTER successful storage save with idempotent submit
+    // 5. Update Application Record in DB with encrypted bank account (H1)
+    const encBank = rawData.bank_acc_no_encrypted || encryptBankAccount(validatedData.bank_acc_no);
+    const bankLast4 = validatedData.bank_acc_no.slice(-4);
+    const dataToSave = {
+      ...validatedData,
+      bank_acc_no_encrypted: encBank,
+      bank_acc_last4: bankLast4,
+    };
+    delete (dataToSave as any).bank_acc_no;
+    delete (dataToSave as any).confirm_bank_acc_no;
+
     const finalApp = await db.submitApplication(application.id, {
       pdf_path: pdfFileName,
       pdf_sha256: sha256,
       merit_score,
-      data: validatedData,
+      data: dataToSave,
       computed: {
         percentage: validatedData.percentage || 0,
         merit_score,
@@ -215,7 +241,7 @@ export async function POST(
       );
     }
 
-    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+    const clientIp = getClientIp(request);
 
     // 6. Audit Log
     await db.logAudit({

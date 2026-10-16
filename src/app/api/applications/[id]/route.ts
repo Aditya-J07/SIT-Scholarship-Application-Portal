@@ -4,8 +4,9 @@ import { db } from '@/lib/db';
 import { calculateMeritScore, calculatePercentage } from '@/lib/merit';
 import { evaluateEligibility } from '@/lib/eligibility';
 import { step1Schema, step2Schema, step3Schema, step4Schema, step5Schema } from '@/lib/schemas/application';
-import { maskBankAccount } from '@/lib/crypto/encryption';
+import { decryptBankAccount, encryptBankAccount, maskBankAccount } from '@/lib/crypto/encryption';
 import { verifyStateChangingOrigin } from '@/lib/auth/origin-guard';
+import { getClientIp } from '@/lib/rate-limit';
 
 export async function GET(
   request: Request,
@@ -40,27 +41,40 @@ export async function GET(
   }));
   const remarks = await db.listRemarksForApplication(application.id);
 
-  // If reviewer viewing, mask bank account number (only admin viewing single application has unmasked view, and it is audited)
+  // Bank account access control (H1):
+  // - Owning student and Admin get decrypted full account number
+  // - Reviewers get masked account number
   const appData = { ...application.data };
-  if (session.role === 'reviewer' && appData.bank_acc_no) {
-    appData.bank_acc_no = maskBankAccount(appData.bank_acc_no);
-    if (appData.confirm_bank_acc_no) {
-      appData.confirm_bank_acc_no = maskBankAccount(appData.confirm_bank_acc_no);
-    }
-  }
 
-  // If admin views full bank details, log audit per M4
-  if (session.role === 'admin') {
-    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
-    await db.logAudit({
-      actor_id: session.userId,
-      actor_email: session.email,
-      action: 'ADMIN_VIEW_APPLICATION_FULL_DETAILS',
-      entity: 'applications',
-      entity_id: application.id,
-      meta: { student_id: application.student_id, ref_no: application.ref_no },
-      ip: clientIp,
-    });
+  if (session.role === 'student' || session.role === 'admin') {
+    if (appData.bank_acc_no_encrypted) {
+      try {
+        appData.bank_acc_no = decryptBankAccount(appData.bank_acc_no_encrypted);
+        appData.confirm_bank_acc_no = appData.bank_acc_no;
+      } catch {
+        appData.bank_acc_no = '';
+      }
+    }
+    delete (appData as any).bank_acc_no_encrypted;
+
+    // If admin views full bank details, log audit per M4 / H1
+    if (session.role === 'admin') {
+      const clientIp = getClientIp(request);
+      await db.logAudit({
+        actor_id: session.userId,
+        actor_email: session.email,
+        action: 'ADMIN_VIEW_APPLICATION_FULL_DETAILS',
+        entity: 'applications',
+        entity_id: application.id,
+        meta: { student_id: application.student_id, ref_no: application.ref_no },
+        ip: clientIp,
+      });
+    }
+  } else if (session.role === 'reviewer') {
+    const last4 = appData.bank_acc_last4 || (appData.bank_acc_no ? appData.bank_acc_no.slice(-4) : '');
+    appData.bank_acc_no = maskBankAccount(last4 ? `XXXX${last4}` : 'XXXXXXXX');
+    delete (appData as any).confirm_bank_acc_no;
+    delete (appData as any).bank_acc_no_encrypted;
   }
 
   return NextResponse.json({
@@ -196,7 +210,16 @@ export async function PATCH(
           { status: 400 }
         );
       }
-      validatedCleanData = res.data;
+      const rawBank = res.data.bank_acc_no;
+      const encBank = encryptBankAccount(rawBank);
+      const bankLast4 = rawBank.slice(-4);
+      validatedCleanData = {
+        ...res.data,
+        bank_acc_no_encrypted: encBank,
+        bank_acc_last4: bankLast4,
+      };
+      delete (validatedCleanData as Record<string, unknown>).bank_acc_no;
+      delete (validatedCleanData as Record<string, unknown>).confirm_bank_acc_no;
     }
 
     // Strip any forbidden or client-manipulable keys
@@ -212,6 +235,11 @@ export async function PATCH(
       ...validatedCleanData,
       scholarship_code: application.data.scholarship_code, // Preserved strictly from initial draft
     };
+
+    if (step === 5) {
+      delete (mergedData as Record<string, unknown>).bank_acc_no;
+      delete (mergedData as Record<string, unknown>).confirm_bank_acc_no;
+    }
 
     // Auto-calculate percentage strictly on the server
     if (mergedData.marks_obtained && mergedData.marks_gross_total) {

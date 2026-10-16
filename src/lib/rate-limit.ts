@@ -107,6 +107,62 @@ export async function checkRateLimit(
 }
 
 /**
+ * Checks if a rate limit bucket has reached or exceeded max points without incrementing points.
+ * Used to enforce failed-attempts-only limits (e.g. login failed attempts).
+ */
+export async function isRateLimitExceeded(
+  key: string,
+  maxPoints: number
+): Promise<{ allowed: boolean; retryAfter: number }> {
+  const allowMemory =
+    process.env.ALLOW_IN_MEMORY_RATE_LIMIT === "1" &&
+    process.env.NODE_ENV !== "production";
+  const now = Date.now();
+
+  if (allowMemory) {
+    const bucket = memoryRateLimits.get(key);
+    if (bucket && bucket.expireAt > now && bucket.points >= maxPoints) {
+      const retryAfter = Math.max(1, Math.ceil((bucket.expireAt - now) / 1000));
+      return { allowed: false, retryAfter };
+    }
+    return { allowed: true, retryAfter: 0 };
+  }
+
+  try {
+    const admin = getAdminClient();
+    const { data } = await admin
+      .from("rate_limits")
+      .select("points, expire_at")
+      .eq("key", key)
+      .maybeSingle();
+
+    if (data) {
+      const exp = new Date(data.expire_at).getTime();
+      if (exp > now && data.points >= maxPoints) {
+        const retryAfter = Math.max(1, Math.ceil((exp - now) / 1000));
+        return { allowed: false, retryAfter };
+      }
+    }
+    return { allowed: true, retryAfter: 0 };
+  } catch {
+    return { allowed: true, retryAfter: 0 };
+  }
+}
+
+/**
+ * Resets a rate limit bucket (e.g. on successful login).
+ */
+export async function resetRateLimit(key: string): Promise<void> {
+  memoryRateLimits.delete(key);
+  try {
+    const admin = getAdminClient();
+    await admin.from("rate_limits").delete().eq("key", key);
+  } catch {
+    // Non-fatal
+  }
+}
+
+/**
  * Constructs a standard HTTP 429 Too Many Requests response with Retry-After header.
  */
 export function rateLimitResponse(retryAfter: number): NextResponse {

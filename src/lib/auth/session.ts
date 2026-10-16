@@ -21,11 +21,6 @@ export interface SessionPayload {
  * Roles are strictly database-controlled; never read from client tokens or user_metadata.
  */
 export async function getCurrentSession(): Promise<SessionPayload | null> {
-  if (process.env.NODE_ENV !== "production" && (globalThis as any).__testSessionOverride) {
-    const override = (globalThis as any).__testSessionOverride;
-    return override;
-  }
-
   try {
     const supabase = await createClient();
     const {

@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireAdminSession } from "@/lib/auth/admin-guard";
 import { verifyStateChangingOrigin } from "@/lib/auth/origin-guard";
-import { createClient } from "@/utils/supabase/server";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { getAdminClient } from "@/utils/supabase/admin";
 import { db } from "@/lib/db";
-import { getClientIp } from "@/lib/rate-limit";
+import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 
 export async function POST(
   request: Request,
@@ -17,6 +17,12 @@ export async function POST(
   // 2. Admin role and session check
   const { session, errorResponse } = await requireAdminSession({ allowReviewer: false });
   if (errorResponse) return errorResponse;
+
+  // Rate limiting: 5 MFA resets per 15 minutes per admin (M4)
+  const rateLimit = await checkRateLimit(`reset-mfa:admin:${session.userId}`, 900, 5);
+  if (!rateLimit.allowed) {
+    return rateLimitResponse(rateLimit.retryAfter);
+  }
 
   const { id: targetUserId } = await params;
 
@@ -39,9 +45,19 @@ export async function POST(
       );
     }
 
-    // 3. Re-verify acting admin's password against Supabase Auth
-    const supabase = await createClient();
-    const { error: authErr } = await supabase.auth.signInWithPassword({
+    // 3. Re-verify acting admin's password against Supabase Auth using isolated non-cookie client (M4)
+    const testUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
+    const testKey = (
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+      ""
+    ).trim();
+
+    const verifyClient = createSupabaseClient(testUrl, testKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
+    const { error: authErr } = await verifyClient.auth.signInWithPassword({
       email: session.email,
       password: admin_password,
     });

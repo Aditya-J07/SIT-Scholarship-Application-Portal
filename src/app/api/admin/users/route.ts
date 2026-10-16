@@ -5,6 +5,7 @@ import { validatePasswordStrength } from "@/lib/auth/password-policy";
 import { UserRole } from "@/lib/types";
 import { requireAdminSession } from "@/lib/auth/admin-guard";
 import { verifyStateChangingOrigin } from "@/lib/auth/origin-guard";
+import { getClientIp } from "@/lib/rate-limit";
 
 const ALLOWED_ROLES = new Set<UserRole>(["student", "reviewer", "admin"]);
 
@@ -99,7 +100,7 @@ export async function POST(request: Request) {
       updated_at: new Date().toISOString(),
     });
 
-    const clientIp = request.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
+    const clientIp = getClientIp(request);
 
     await db.logAudit({
       actor_id: session.userId,

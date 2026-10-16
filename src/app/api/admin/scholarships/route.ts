@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth/admin-guard';
 import { db } from '@/lib/db';
+import { getClientIp } from '@/lib/rate-limit';
 
 export async function GET(request?: Request) {
   const { session, errorResponse } = await requireAdmin();
@@ -32,7 +33,7 @@ export async function PUT(request: Request) {
       ...(description && { description }),
     });
 
-    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+    const clientIp = getClientIp(request);
 
     await db.logAudit({
       actor_id: session.userId,

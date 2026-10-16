@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { getAuthorizedSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { ApplicationFileRecord } from '@/lib/types';
 import { storage } from '@/lib/storage';
@@ -28,20 +28,10 @@ export async function POST(
   const originErr = verifyStateChangingOrigin(request);
   if (originErr) return originErr;
 
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
-  }
+  const { session, errorResponse } = await getAuthorizedSession();
+  if (errorResponse) return errorResponse;
 
-  // 2. Role authorization: Reviewers may NOT upload
-  if (session.role === 'reviewer') {
-    return NextResponse.json(
-      { error: { message: 'Reviewers are not permitted to upload or alter application files.' } },
-      { status: 403 }
-    );
-  }
-
-  // 3. Rate limiting: 30 uploads per hour per user
+  // 2. Rate limiting: 30 uploads per hour per user
   const rateLimit = await checkRateLimit(`upload:user:${session.userId}`, 3600, 30);
   if (!rateLimit.allowed) {
     return rateLimitResponse(rateLimit.retryAfter);
@@ -53,8 +43,8 @@ export async function POST(
     return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
   }
 
-  // Ownership check: only owning student or admin can upload
-  if (session.role === 'student' && application.student_id !== session.userId) {
+  // Ownership check: ONLY the owning student can upload to an application (H2)
+  if (session.role !== 'student' || application.student_id !== session.userId) {
     return NextResponse.json({ error: { message: 'Forbidden' } }, { status: 403 });
   }
 
@@ -141,7 +131,10 @@ export async function POST(
     const isPdf = buffer.length > 4 && buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46; // %PDF
     const isJpg = buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
     const isPng = buffer.length > 4 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47; // .PNG
-    const isWebp = buffer.length > 12 && buffer.toString('ascii', 8, 12) === 'WEBP';
+    const isWebp =
+      buffer.length > 12 &&
+      buffer.toString('ascii', 0, 4) === 'RIFF' &&
+      buffer.toString('ascii', 8, 12) === 'WEBP';
 
     if (!isPdf && !isJpg && !isPng && !isWebp) {
       return NextResponse.json(
@@ -174,11 +167,11 @@ export async function POST(
       ext = 'jpg';
     }
 
-    // Strip EXIF metadata from uploaded images (auto-orient according to EXIF and remove all metadata tags)
+    // Strip EXIF metadata from uploaded images with memory limit (M5)
     let finalBuffer = buffer;
     if (isPng || isJpg || isWebp) {
       try {
-        finalBuffer = await sharp(buffer).rotate().toBuffer();
+        finalBuffer = await sharp(buffer, { limitInputPixels: 25_000_000 }).rotate().toBuffer();
       } catch (err: unknown) {
         console.error('Image EXIF stripping / validation error:', err);
         return NextResponse.json(
@@ -188,18 +181,12 @@ export async function POST(
       }
     }
 
-    // If replacing an existing file of the same kind, delete the previous storage object
-    const previousFile = existingFiles.find((f: ApplicationFileRecord) => f.kind === kind);
-    if (previousFile) {
-      await storage.deleteFile(previousFile.storage_path);
-      await db.deleteFileRecord(previousFile.id);
-    }
-
     const sha256 = crypto.createHash('sha256').update(finalBuffer).digest('hex');
     const safeFileId = crypto.randomUUID();
     // Secure server-generated storage path (never uses user input)
     const storagePath = `${application.id}/${kind}-${safeFileId}.${ext}`;
 
+    // M5: Save the new file FIRST before deleting the old one
     await storage.saveFile(storagePath, finalBuffer, detectedMime);
 
     // Sanitize original filename for display
@@ -221,6 +208,17 @@ export async function POST(
     };
 
     await db.saveFileRecord(fileRecord);
+
+    // Now delete the previous file only after new file is safely committed (M5)
+    const previousFile = existingFiles.find((f: ApplicationFileRecord) => f.kind === kind);
+    if (previousFile) {
+      try {
+        await storage.deleteFile(previousFile.storage_path);
+        await db.deleteFileRecord(previousFile.id);
+      } catch (deleteErr) {
+        console.warn('Failed to delete old replaced file:', deleteErr);
+      }
+    }
 
     const clientIp = getClientIp(request);
     await db.logAudit({

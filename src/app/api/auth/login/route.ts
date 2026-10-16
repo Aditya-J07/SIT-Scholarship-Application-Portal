@@ -4,10 +4,13 @@ import { db } from "@/lib/db";
 import {
   checkRateLimit,
   getClientIp,
+  isRateLimitExceeded,
   rateLimitResponse,
   rateLimitUnavailableResponse,
+  resetRateLimit,
 } from "@/lib/rate-limit";
 import { verifyStateChangingOrigin } from "@/lib/auth/origin-guard";
+import { verifyTurnstileToken } from "@/lib/auth/turnstile";
 
 export async function POST(request: Request) {
   // 1. CSRF Origin Verification
@@ -18,7 +21,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { email, password } = body;
+    const { email, password, turnstileToken } = body;
 
     if (!email || !password) {
       return NextResponse.json(
@@ -29,8 +32,17 @@ export async function POST(request: Request) {
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    // 2. Atomic Rate Limiting: 5 per 15 minutes per IP and per Email (fail closed with 503 if DB limiter fails)
-    const ipLimit = await checkRateLimit(`login:ip:${clientIp}`, 900, 5);
+    // 2. Turnstile Verification
+    const turnstileResult = await verifyTurnstileToken(turnstileToken, clientIp);
+    if (!turnstileResult.success) {
+      return NextResponse.json(
+        { error: { message: turnstileResult.message || "CAPTCHA verification failed" } },
+        { status: 400 }
+      );
+    }
+
+    // 3. Campus-friendly Rate Limiting: 100 per 15 minutes per IP (supports shared hostel/campus networks)
+    const ipLimit = await checkRateLimit(`login:ip:${clientIp}`, 900, 100);
     if (ipLimit.dbUnavailable) {
       return rateLimitUnavailableResponse();
     }
@@ -38,12 +50,10 @@ export async function POST(request: Request) {
       return rateLimitResponse(ipLimit.retryAfter);
     }
 
-    const emailLimit = await checkRateLimit(`login:email:${normalizedEmail}`, 900, 5);
-    if (emailLimit.dbUnavailable) {
-      return rateLimitUnavailableResponse();
-    }
-    if (!emailLimit.allowed) {
-      return rateLimitResponse(emailLimit.retryAfter);
+    // 4. Per-email failure limit: check if 5 failed attempts already recorded in last 15 min
+    const emailExceeded = await isRateLimitExceeded(`login:email:${normalizedEmail}`, 5);
+    if (!emailExceeded.allowed) {
+      return rateLimitResponse(emailExceeded.retryAfter);
     }
 
     const supabase = await createClient();
@@ -53,6 +63,9 @@ export async function POST(request: Request) {
     });
 
     if (authError || !authData.user) {
+      // Record failed attempt against email bucket (5 per 15 min)
+      await checkRateLimit(`login:email:${normalizedEmail}`, 900, 5);
+
       await db.logAudit({
         actor_email: normalizedEmail,
         action: "LOGIN_FAILED",
@@ -68,6 +81,9 @@ export async function POST(request: Request) {
         { status: 401 }
       );
     }
+
+    // On successful login: reset email failure bucket so legitimate user is never blocked
+    await resetRateLimit(`login:email:${normalizedEmail}`);
 
     // Load server-controlled profile (role is NEVER read from user_metadata)
     const profile = await db.findUserById(authData.user.id);

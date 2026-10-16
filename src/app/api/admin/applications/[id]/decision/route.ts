@@ -5,6 +5,7 @@ import { sendNotification } from '@/lib/notifications';
 import { NotificationType } from '@/lib/notifications';
 import crypto from 'crypto';
 import { verifyStateChangingOrigin } from '@/lib/auth/origin-guard';
+import { getClientIp } from '@/lib/rate-limit';
 
 const ALLOWED_ACTIONS = new Set([
   'recommendation',
@@ -20,6 +21,13 @@ const ALLOWED_RECOMMENDATION_STATUSES = new Set([
   'not_recommended',
   'pending',
 ]);
+
+// M2: Canonical status transition rules for administrative decisions
+const ALLOWED_DECISION_TRANSITIONS: Record<string, string[]> = {
+  submitted: ['under_review', 'needs_correction', 'shortlisted', 'accepted', 'rejected'],
+  under_review: ['needs_correction', 'shortlisted', 'accepted', 'rejected'],
+  shortlisted: ['accepted', 'rejected'],
+};
 
 export async function POST(
   request: Request,
@@ -38,9 +46,17 @@ export async function POST(
     return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
   }
 
+  // M2: Draft applications cannot be decided
+  if (application.status === 'draft') {
+    return NextResponse.json(
+      { error: { message: 'Draft applications cannot be decided. Application must be submitted by the student first.' } },
+      { status: 409 }
+    );
+  }
+
   try {
     const body = await request.json();
-    const { action, remark, hard_copy_received, recommendation_status, recommendation_note } = body;
+    const { action, remark, hard_copy_received, recommendation_status, recommendation_note, is_override, admin_override } = body;
 
     // Validate action against allow-list (return 400, not 500)
     if (!action || !ALLOWED_ACTIONS.has(action)) {
@@ -50,7 +66,7 @@ export async function POST(
       );
     }
 
-    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+    const clientIp = getClientIp(request);
 
     // Reviewer recommendation (HoD / Proctor) - accessible to both reviewer and admin
     if (action === 'recommendation') {
@@ -99,6 +115,25 @@ export async function POST(
       );
     }
 
+    let targetStatus = application.status;
+    let notifType: NotificationType | null = null;
+
+    if (action === 'accept') {
+      targetStatus = 'accepted';
+      notifType = 'APPLICATION_ACCEPTED';
+    } else if (action === 'reject') {
+      targetStatus = 'rejected';
+      notifType = 'APPLICATION_REJECTED';
+    } else if (action === 'shortlist') {
+      targetStatus = 'shortlisted';
+      notifType = 'SHORTLISTED_FOR_AWARD';
+    } else if (action === 'correction') {
+      targetStatus = 'needs_correction';
+      notifType = 'CORRECTION_REQUESTED';
+    } else if (action === 'under_review') {
+      targetStatus = 'under_review';
+    }
+
     if (action === 'reject' && (!remark || remark.trim().length === 0)) {
       return NextResponse.json(
         { error: { message: 'A rejection reason is mandatory' } },
@@ -113,27 +148,42 @@ export async function POST(
       );
     }
 
-    let newStatus = application.status;
-    let notifType: NotificationType | null = null;
+    // M2: Enforce status transition table and override rules
+    const hasOverrideFlag = Boolean(is_override || admin_override);
+    const hasOverrideReason = Boolean(remark && remark.trim().length > 0);
+    const validOverride = hasOverrideFlag && hasOverrideReason;
 
-    if (action === 'accept') {
-      newStatus = 'accepted';
-      notifType = 'APPLICATION_ACCEPTED';
-    } else if (action === 'reject') {
-      newStatus = 'rejected';
-      notifType = 'APPLICATION_REJECTED';
-    } else if (action === 'shortlist') {
-      newStatus = 'shortlisted';
-      notifType = 'SHORTLISTED_FOR_AWARD';
-    } else if (action === 'correction') {
-      newStatus = 'needs_correction';
-      notifType = 'CORRECTION_REQUESTED';
-    } else if (action === 'under_review') {
-      newStatus = 'under_review';
+    const isTerminalOrLocked = ['accepted', 'rejected', 'withdrawn', 'needs_correction'].includes(application.status);
+
+    if (isTerminalOrLocked) {
+      if (!validOverride) {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'INVALID_STATUS_TRANSITION',
+              message: `Cannot transition application from status '${application.status}' to '${targetStatus}' without an explicit administrator override and documented reason.`,
+            },
+          },
+          { status: 409 }
+        );
+      }
+    } else {
+      const allowedTargets = ALLOWED_DECISION_TRANSITIONS[application.status] || [];
+      if (!allowedTargets.includes(targetStatus) && !validOverride) {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'INVALID_STATUS_TRANSITION',
+              message: `Invalid status transition from '${application.status}' to '${targetStatus}'.`,
+            },
+          },
+          { status: 409 }
+        );
+      }
     }
 
     const updated = await db.updateApplication(id, {
-      status: newStatus,
+      status: targetStatus,
       decided_at: new Date().toISOString(),
       decided_by: session.userId,
       decision_remark: remark || undefined,
@@ -158,14 +208,15 @@ export async function POST(
     await db.logAudit({
       actor_id: session.userId,
       actor_email: session.email,
-      action: `APPLICATION_DECISION_${action.toUpperCase()}`,
+      action: validOverride ? 'ADMIN_DECISION_OVERRIDE' : `APPLICATION_DECISION_${action.toUpperCase()}`,
       entity: 'applications',
       entity_id: id,
       meta: {
         previous_status: application.status,
-        new_status: newStatus,
+        new_status: targetStatus,
         remark,
         hard_copy_received,
+        is_override: validOverride,
       },
       ip: clientIp,
     });

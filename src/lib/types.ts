@@ -27,6 +27,7 @@ export interface UserProfile {
   two_factor_recovery_codes?: string[];
   bank_account_holder?: string;
   bank_acc_no?: string;
+  bank_acc_no_encrypted?: string;
   bank_acc_last4?: string;
   bank_name?: string;
   bank_branch?: string;
@@ -112,7 +113,10 @@ export interface ApplicationFormData {
   // Step 5: Bank details (student's own)
   bank_acc_holder_name: string;
   bank_acc_no: string;
+  bank_acc_no_encrypted?: string | null;
+  bank_acc_last4?: string | null;
   confirm_bank_acc_no?: string;
+  is_masked?: boolean;
   bank_name: string;
   bank_branch: string;
   bank_ifsc: string;

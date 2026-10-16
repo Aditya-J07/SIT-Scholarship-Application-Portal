@@ -63,10 +63,8 @@ export function generateNotificationContent(payload: NotificationPayload): { sub
 }
 
 export async function sendNotification(payload: NotificationPayload): Promise<boolean> {
-  const content = generateNotificationContent(payload);
-  console.log(`[NOTIFICATION_DISPATCH] To: ${payload.toEmail} | Mobile: ${payload.toMobile || 'N/A'}`);
-  console.log(`[SUBJECT] ${content.subject}`);
-  console.log(`[BODY]\n${content.body}\n------------------------------------------`);
-  // In production, integrate Resend/SMTP and MSG91 SMS gateway here
+  // In production, integrate Resend/SMTP and SMS gateway here.
+  // Fallback logger records only event type and reference number to prevent PII leakage (Low)
+  console.log(`[NOTIFICATION_DISPATCH] Type: ${payload.type} | Ref: ${payload.refNo || 'N/A'}`);
   return true;
 }

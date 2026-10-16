@@ -1,15 +1,14 @@
 import { NextResponse } from 'next/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { getAuthorizedSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
+import { getClientIp } from '@/lib/rate-limit';
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
-  }
+  const { session, errorResponse } = await getAuthorizedSession();
+  if (errorResponse) return errorResponse;
 
   const { id } = await params;
   const application = await db.findApplicationById(id);
@@ -17,7 +16,8 @@ export async function POST(
     return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
   }
 
-  if (session.role === 'student' && application.student_id !== session.userId) {
+  // Ownership check: ONLY the owning student can withdraw their application (H2)
+  if (session.role !== 'student' || application.student_id !== session.userId) {
     return NextResponse.json({ error: { message: 'Forbidden' } }, { status: 403 });
   }
 
@@ -32,7 +32,7 @@ export async function POST(
     status: 'withdrawn',
   });
 
-  const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+  const clientIp = getClientIp(request);
 
   await db.logAudit({
     actor_id: session.userId,

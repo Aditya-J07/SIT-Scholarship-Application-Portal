@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { ApplicationRecord, Scholarship } from '../types';
 import { storage } from '../storage';
+import { decryptBankAccount } from '../crypto/field-encryption';
 
 export interface GeneratePdfOptions {
   isDraft?: boolean;
@@ -357,9 +358,18 @@ export async function generateApplicationPdf(
   // 12) Amount required
   drawRow('12)', 'Scholarship amount required :', `Rs. ${(appData.scholarship_amount_required_per_month || 0).toLocaleString('en-IN')} per month`);
 
-  // 13) Bank Account
+  // 13) Bank Account (signed form displays full account number)
+  let bankNumberDisplay = appData.bank_acc_no || '';
+  if (!bankNumberDisplay && appData.bank_acc_no_encrypted) {
+    try {
+      bankNumberDisplay = decryptBankAccount(appData.bank_acc_no_encrypted);
+    } catch {
+      bankNumberDisplay = appData.bank_acc_last4 ? `XXXX${appData.bank_acc_last4}` : '';
+    }
+  }
+
   drawRow('13)', 'Bank Account Details of Student', '', 56, [
-    { label: 'S.B. A/c. No. :', value: appData.bank_acc_no || '' },
+    { label: 'S.B. A/c. No. :', value: bankNumberDisplay },
     { label: 'Name of the Bank :', value: `${appData.bank_name || ''} (Holder: ${appData.bank_acc_holder_name || ''})` },
     { label: 'Branch Address :', value: appData.bank_branch || '' },
     { label: 'IFSC Code :', value: appData.bank_ifsc || '' },

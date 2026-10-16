@@ -4,6 +4,8 @@ import { db } from '@/lib/db';
 import { ApplicationRecord } from '@/lib/types';
 import { calculateMeritScore } from '@/lib/merit';
 import { evaluateEligibility } from '@/lib/eligibility';
+import { encryptBankAccount } from '@/lib/crypto/encryption';
+import { getClientIp } from '@/lib/rate-limit';
 import crypto from 'crypto';
 
 function generateUnambiguousRefNo(scholarshipCode: string, year: number): string {
@@ -87,10 +89,17 @@ export async function POST(request: Request) {
       );
     }
 
-    // Prefill data from student profile
+    // Prefill data from student profile with encrypted bank details (H1)
     const profile = await db.findUserById(session.userId);
     const currentYear = new Date().getFullYear();
     const ref_no = generateUnambiguousRefNo(scholarship.code, currentYear);
+
+    const bankEnc = profile?.bank_acc_no
+      ? encryptBankAccount(profile.bank_acc_no)
+      : profile?.bank_acc_no_encrypted || null;
+    const bankLast4 =
+      profile?.bank_acc_last4 ||
+      (profile?.bank_acc_no ? profile.bank_acc_no.slice(-4) : '');
 
     const initialData = {
       scholarship_code: scholarship.code,
@@ -100,8 +109,8 @@ export async function POST(request: Request) {
       nationality: 'Indian',
       course_duration_years: 4,
       bank_acc_holder_name: profile?.bank_account_holder || profile?.full_name || '',
-      bank_acc_no: profile?.bank_acc_no || '',
-      confirm_bank_acc_no: profile?.bank_acc_no || '',
+      bank_acc_no_encrypted: bankEnc,
+      bank_acc_last4: bankLast4,
       bank_name: profile?.bank_name || '',
       bank_branch: profile?.bank_branch || '',
       bank_ifsc: profile?.bank_ifsc || '',
@@ -131,7 +140,7 @@ export async function POST(request: Request) {
 
     await db.createApplication(newApp);
 
-    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+    const clientIp = getClientIp(request);
 
     await db.logAudit({
       actor_id: session.userId,
