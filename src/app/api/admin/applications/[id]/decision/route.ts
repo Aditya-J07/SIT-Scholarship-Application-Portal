@@ -24,9 +24,12 @@ const ALLOWED_RECOMMENDATION_STATUSES = new Set([
 
 // M2: Canonical status transition rules for administrative decisions
 const ALLOWED_DECISION_TRANSITIONS: Record<string, string[]> = {
-  submitted: ['under_review', 'needs_correction', 'shortlisted', 'accepted', 'rejected'],
+  submitted: ['under_review', 'needs_correction', 'rejected'],
   under_review: ['needs_correction', 'shortlisted', 'accepted', 'rejected'],
   shortlisted: ['accepted', 'rejected'],
+  needs_correction: ['under_review', 'rejected'],
+  rejected: [],
+  accepted: [],
 };
 
 export async function POST(
@@ -56,7 +59,8 @@ export async function POST(
 
   try {
     const body = await request.json();
-    const { action, remark, hard_copy_received, recommendation_status, recommendation_note, is_override, admin_override } = body;
+    const { action, remark, override_reason, hard_copy_received, recommendation_status, recommendation_note, is_override, admin_override } = body;
+    const effectiveRemark = override_reason || remark;
 
     // Validate action against allow-list (return 400, not 500)
     if (!action || !ALLOWED_ACTIONS.has(action)) {
@@ -150,7 +154,7 @@ export async function POST(
 
     // M2: Enforce status transition table and override rules
     const hasOverrideFlag = Boolean(is_override || admin_override);
-    const hasOverrideReason = Boolean(remark && remark.trim().length > 0);
+    const hasOverrideReason = Boolean(effectiveRemark && effectiveRemark.trim().length > 0);
     const validOverride = hasOverrideFlag && hasOverrideReason;
 
     const isTerminalOrLocked = ['accepted', 'rejected', 'withdrawn', 'needs_correction'].includes(application.status);
@@ -186,12 +190,12 @@ export async function POST(
       status: targetStatus,
       decided_at: new Date().toISOString(),
       decided_by: session.userId,
-      decision_remark: remark || undefined,
+      decision_remark: effectiveRemark || undefined,
       ...(hard_copy_received !== undefined && { hard_copy_received }),
     });
 
     // Record Remark thread entry
-    if (remark) {
+    if (effectiveRemark) {
       await db.addRemark({
         id: crypto.randomUUID(),
         application_id: id,
@@ -199,7 +203,7 @@ export async function POST(
         author_name: session.fullName,
         author_role: session.role,
         kind: action === 'correction' ? 'correction_request' : 'decision',
-        body: remark,
+        body: effectiveRemark,
         created_at: new Date().toISOString(),
       });
     }
@@ -214,7 +218,7 @@ export async function POST(
       meta: {
         previous_status: application.status,
         new_status: targetStatus,
-        remark,
+        remark: effectiveRemark,
         hard_copy_received,
         is_override: validOverride,
       },

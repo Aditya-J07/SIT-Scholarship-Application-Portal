@@ -55,6 +55,7 @@ export async function GET(
         appData.bank_acc_no = '';
       }
     }
+    appData.is_masked = false;
     delete (appData as any).bank_acc_no_encrypted;
 
     // If admin views full bank details, log audit per M4 / H1
@@ -63,7 +64,7 @@ export async function GET(
       await db.logAudit({
         actor_id: session.userId,
         actor_email: session.email,
-        action: 'ADMIN_VIEW_APPLICATION_FULL_DETAILS',
+        action: 'ADMIN_DECRYPT_BANK_ACCOUNT',
         entity: 'applications',
         entity_id: application.id,
         meta: { student_id: application.student_id, ref_no: application.ref_no },
@@ -72,7 +73,8 @@ export async function GET(
     }
   } else if (session.role === 'reviewer') {
     const last4 = appData.bank_acc_last4 || (appData.bank_acc_no ? appData.bank_acc_no.slice(-4) : '');
-    appData.bank_acc_no = maskBankAccount(last4 ? `XXXX${last4}` : 'XXXXXXXX');
+    appData.bank_acc_no = last4 ? `XXXX${last4}` : 'XXXXXXXX';
+    appData.is_masked = true;
     delete (appData as any).confirm_bank_acc_no;
     delete (appData as any).bank_acc_no_encrypted;
   }
