@@ -17,11 +17,16 @@ export async function createClient(customCookieStore?: Awaited<ReturnType<typeof
       };
     }
   }
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  let supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
+  try {
+    supabaseUrl = new URL(supabaseUrl).origin;
+  } catch {
+    // Keep as is
+  }
   const supabaseKey =
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    "";
+    (process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+      "").trim();
 
   return createServerClient(supabaseUrl, supabaseKey, {
     cookies: {

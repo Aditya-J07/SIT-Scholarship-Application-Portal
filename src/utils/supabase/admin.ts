@@ -3,9 +3,18 @@ import { createClient as createSupabaseClient, SupabaseClient } from "@supabase/
 
 let adminClientInstance: SupabaseClient | null = null;
 
+function cleanSupabaseUrl(url?: string): string {
+  if (!url) return "";
+  try {
+    return new URL(url.trim()).origin;
+  } catch {
+    return url.trim();
+  }
+}
+
 export function createAdminClient(customUrl?: string, customSecretKey?: string): SupabaseClient {
-  const supabaseUrl = customUrl || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseSecretKey = customSecretKey || process.env.SUPABASE_SECRET_KEY;
+  const supabaseUrl = cleanSupabaseUrl(customUrl || process.env.NEXT_PUBLIC_SUPABASE_URL);
+  const supabaseSecretKey = (customSecretKey || process.env.SUPABASE_SECRET_KEY)?.trim();
 
   if (!supabaseUrl || !supabaseSecretKey) {
     throw new Error(
@@ -26,6 +35,10 @@ export function getAdminClient(): SupabaseClient {
     adminClientInstance = createAdminClient();
   }
   return adminClientInstance;
+}
+
+export function resetAdminClient(): void {
+  adminClientInstance = null;
 }
 
 export const adminSupabase = {

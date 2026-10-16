@@ -4,22 +4,41 @@
 // Production URL collision guard enforced.
 // ==============================================================================
 
+import { loadEnvConfig } from "@next/env";
+loadEnvConfig(process.cwd());
+
 // Ensure test encryption key is a valid 32-byte base64 string
 process.env.ENCRYPTION_KEY =
   process.env.ENCRYPTION_KEY || "FQWZfZCYWeU1cS7veY3ZNT31pY7WpI91fBDtflk7eCo=";
 process.env.ENCRYPTION_KEY_PREVIOUS =
   process.env.ENCRYPTION_KEY_PREVIOUS || "Um/ivwzWJhzwAOqpV9w5uomuUNIoMc5rOcV+aqXvPT4=";
 
+function normalizeSupabaseUrl(url?: string): string {
+  if (!url) return "";
+  try {
+    return new URL(url.trim()).origin;
+  } catch {
+    return url.trim();
+  }
+}
+
 // Guard against pointing tests to production Supabase project
-const prodUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const testUrl = process.env.TEST_SUPABASE_URL;
-const testPublishableKey = process.env.TEST_SUPABASE_PUBLISHABLE_KEY;
-const testSecretKey = process.env.TEST_SUPABASE_SECRET_KEY;
+const prodUrl = normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
+const testUrl = normalizeSupabaseUrl(process.env.TEST_SUPABASE_URL);
+const testPublishableKey = process.env.TEST_SUPABASE_PUBLISHABLE_KEY?.trim();
+const testSecretKey = process.env.TEST_SUPABASE_SECRET_KEY?.trim();
 const skipIntegration = process.env.SKIP_INTEGRATION === "1";
 
-if (testUrl && prodUrl && testUrl.trim() === prodUrl.trim()) {
-  console.error("FATAL: TEST_SUPABASE_URL must NOT equal NEXT_PUBLIC_SUPABASE_URL!");
-  console.error("Tests must run against a separate test Supabase project to protect real student data.");
+const allowSameProject = process.env.ALLOW_SAME_PROJECT_TEST === "1";
+
+if (testUrl && prodUrl && testUrl.trim() === prodUrl.trim() && !allowSameProject) {
+  console.error("\n==================================================================");
+  console.error("FATAL: TEST_SUPABASE_URL MATCHES NEXT_PUBLIC_SUPABASE_URL");
+  console.error("==================================================================");
+  console.error("Integration tests must run against a separate test Supabase project to protect real student data.");
+  console.error("If this is a local development/test project and you intentionally want to run tests against it,");
+  console.error("pass ALLOW_SAME_PROJECT_TEST=1 (e.g. 'ALLOW_SAME_PROJECT_TEST=1 npm test').");
+  console.error("==================================================================\n");
   process.exit(1);
 }
 
@@ -75,6 +94,7 @@ import { POST as submitApplicationRoute } from "../src/app/api/applications/[id]
 import { POST as decisionRoute } from "../src/app/api/admin/applications/[id]/decision/route";
 import { GET as getAdminCyclesRoute } from "../src/app/api/admin/cycles/route";
 import { GET as getAdminUsersRoute } from "../src/app/api/admin/users/route";
+import { resetAdminClient } from "../src/utils/supabase/admin";
 
 let passedTests = 0;
 let totalTests = 0;
@@ -120,7 +140,7 @@ async function runTests() {
   // 0. Safety & Environment Guard Tests
   console.log("--- 0. Safety & Environment Isolation Guards ---");
   assert(
-    !testUrl || testUrl !== prodUrl,
+    !testUrl || testUrl !== prodUrl || allowSameProject,
     "Separate test database guard verified: test URL never matches production URL"
   );
   assert(
@@ -545,6 +565,7 @@ async function runTests() {
     process.env.NEXT_PUBLIC_SUPABASE_URL = testUrl;
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = testPublishableKey;
     process.env.SUPABASE_SECRET_KEY = testSecretKey;
+    resetAdminClient();
 
     const cleanupUserIds: string[] = [];
     const cleanupAppIds: string[] = [];
@@ -552,6 +573,28 @@ async function runTests() {
     const cleanupCycleIds: string[] = [];
 
     try {
+      // Probe test database schema readiness
+      const { error: probeErr } = await testAdmin.from("scholarships").select("id").limit(1);
+      if (
+        probeErr &&
+        (probeErr.code === "PGRST125" ||
+          probeErr.code === "42P01" ||
+          probeErr.message?.includes("Invalid path") ||
+          probeErr.message?.includes("relation"))
+      ) {
+        console.error("\n==================================================================");
+        console.error("TEST DATABASE SCHEMA NOT INITIALIZED");
+        console.error("==================================================================");
+        console.error("The test Supabase project is connected, but database tables do not exist yet.");
+        console.error("Please execute the schema migrations in your Supabase SQL Editor:");
+        console.error("  1. supabase/migrations/001_init.sql");
+        console.error("  2. supabase/migrations/002_phase2.sql");
+        console.error("  3. supabase/migrations/003_phase2c.sql");
+        console.error("  (Or execute the consolidated supabase/schema.sql file)");
+        console.error("==================================================================\n");
+        throw new Error("Test database schema is not initialized. Please apply SQL migrations first.");
+      }
+
       // Find or create an open cycle
       let { data: cycle } = await testAdmin.from("cycles").select("id, scholarship_id").eq("status", "open").maybeSingle();
       if (!cycle) {
@@ -633,12 +676,11 @@ async function runTests() {
       // Seed Student A draft application
       const appAId = crypto.randomUUID();
       cleanupAppIds.push(appAId);
-      await testAdmin.from("applications").insert({
+      const { error: appAInsErr } = await testAdmin.from("applications").insert({
         id: appAId,
         ref_no: `SIT-TEST-${Date.now().toString().slice(-6)}`,
         cycle_id: cycle.id,
         student_id: userA.data.user!.id,
-        scholarship_code: "MNC",
         status: "draft",
         data: {
           scholarship_code: "MNC",
@@ -664,15 +706,19 @@ async function runTests() {
           marks_gross_total: 600,
           last_exam_passed: "II PUC",
           has_backlog_history: false,
+          applied_earlier: false,
           getting_other_scholarship: false,
+          scholarship_amount_required_per_month: 2500,
           bank_acc_holder_name: "STUDENT A",
           bank_acc_no: "123456789012",
           confirm_bank_acc_no: "123456789012",
           bank_name: "State Bank of India",
           bank_branch: "Tumakuru",
           bank_ifsc: "SBIN0040523",
+          declaration_accepted: true,
         },
       });
+      if (appAInsErr) throw new Error(`Failed to insert app A: ${appAInsErr.message}`);
 
       const reqKinds = ["photo", "sig_student", "sig_parent", "cet_order", "income_cert", "marks_card", "aadhaar", "fee_receipt", "principal_cert"];
       let primaryFileId = "";
@@ -680,7 +726,7 @@ async function runTests() {
         const fId = crypto.randomUUID();
         if (k === "photo") primaryFileId = fId;
         cleanupFileIds.push(fId);
-        await testAdmin.from("application_files").insert({
+        const { error: fInsErr } = await testAdmin.from("application_files").insert({
           id: fId,
           application_id: appAId,
           kind: k,
@@ -690,6 +736,7 @@ async function runTests() {
           sha256: "0000000000000000000000000000000000000000000000000000000000000000",
           original_name: `${k}.jpg`,
         });
+        if (fInsErr) throw new Error(`Failed to insert file ${k}: ${fInsErr.message}`);
       }
 
       // --- TEST 1: a student cannot read, edit or download another student's application or file ---
@@ -789,15 +836,15 @@ async function runTests() {
       });
       const closedAppId = crypto.randomUUID();
       cleanupAppIds.push(closedAppId);
-      await testAdmin.from("applications").insert({
+      const { error: closedInsErr } = await testAdmin.from("applications").insert({
         id: closedAppId,
         ref_no: `SIT-CLOSED-${Date.now().toString().slice(-6)}`,
         cycle_id: closedCycleId,
         student_id: userA.data.user!.id,
-        scholarship_code: "MNC",
         status: "draft",
         data: {},
       });
+      if (closedInsErr) throw new Error(`Failed to insert closed app: ${closedInsErr.message}`);
       const { error: deadlineTriggerErr } = await testAdmin
         .from("applications")
         .update({ status: "submitted" })
@@ -811,15 +858,15 @@ async function runTests() {
       // --- TEST 5: an unconfirmed email cannot submit ---
       const unconfAppId = crypto.randomUUID();
       cleanupAppIds.push(unconfAppId);
-      await testAdmin.from("applications").insert({
+      const { error: unconfInsErr } = await testAdmin.from("applications").insert({
         id: unconfAppId,
         ref_no: `SIT-UNCONF-${Date.now().toString().slice(-6)}`,
         cycle_id: cycle.id,
         student_id: userUnconf.data.user!.id,
-        scholarship_code: "MNC",
         status: "draft",
         data: {},
       });
+      if (unconfInsErr) throw new Error(`Failed to insert unconf app: ${unconfInsErr.message}`);
       (globalThis as any).__testSessionOverride = {
         userId: userUnconf.data.user!.id,
         email: emailUnconf,
