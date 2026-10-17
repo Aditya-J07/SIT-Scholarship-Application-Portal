@@ -8,7 +8,8 @@ import EligibilityPanel from '@/components/EligibilityPanel';
 import SignaturePad from '@/components/SignaturePad';
 import FileUploadField from '@/components/FileUploadField';
 import { useLanguage } from '@/components/LanguageToggle';
-import { SIT_COURSES, ENCLOSURES_METADATA } from '@/lib/constants';
+import { SIT_COURSES, ENCLOSURES_METADATA, REQUIRE_GUARDIAN_CONSENT_FOR_MINORS } from '@/lib/constants';
+import { isApplicantMinor } from '@/lib/schemas/application';
 
 export default function ApplyWizardPage({
   params,
@@ -1239,6 +1240,60 @@ export default function ApplyWizardPage({
               </div>
             </div>
 
+            {/* Minor Guardian Consent (DPDP Act 2023) */}
+            {REQUIRE_GUARDIAN_CONSENT_FOR_MINORS && formData.dob && isApplicantMinor(formData.dob) && (
+              <div className="border-2 border-amber-500 bg-amber-50 p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="bg-amber-600 text-white text-[10px] font-bold px-1.5 py-0.5 uppercase">
+                    Mandatory: Minor Applicant (&lt; 18 Years)
+                  </span>
+                  <span className="text-[11px] font-bold text-amber-900">
+                    DPDP Act 2023 Parental / Guardian Consent
+                  </span>
+                </div>
+                <p className="text-[11px] text-amber-950 leading-relaxed">
+                  As the applicant is under 18 years of age on the date of application, parental / lawful guardian consent is mandatory under the DPDP Act 2023.
+                </p>
+
+                <div>
+                  <label className="block font-bold text-gray-800 mb-1" htmlFor="guardian-consent-name">
+                    Full Name of Parent / Lawful Guardian <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    id="guardian-consent-name"
+                    type="text"
+                    required
+                    value={formData.guardian_consent_name || ''}
+                    onChange={(e) => setFormData({ ...formData, guardian_consent_name: e.target.value.toUpperCase() })}
+                    placeholder="ENTER PARENT / GUARDIAN FULL NAME"
+                    className="gov-input uppercase max-w-md bg-white"
+                  />
+                  {fieldErrors.guardian_consent_name && (
+                    <p className="text-red-600 text-xs font-bold mt-1">{fieldErrors.guardian_consent_name[0]}</p>
+                  )}
+                </div>
+
+                <div className="border border-amber-300 bg-white p-3">
+                  <label className="flex items-start gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      required
+                      checked={formData.guardian_consent_accepted === true}
+                      onChange={(e) => setFormData({ ...formData, guardian_consent_accepted: e.target.checked })}
+                      className="mt-0.5 h-4 w-4 rounded-none border-gray-400 text-[#AC3D47] focus:ring-[#AC3D47]"
+                    />
+                    <span className="text-xs text-gray-900 leading-relaxed font-medium">
+                      <strong>TODO [COLLEGE DECISION REQUIRED]: Guardian Consent: </strong>
+                      I, the lawful parent / guardian of the minor applicant, hereby consent to the processing of personal data for the scholarship application under DPDP Act 2023.
+                    </span>
+                  </label>
+                  {fieldErrors.guardian_consent_accepted && (
+                    <p className="text-red-600 text-xs font-bold mt-1.5">{fieldErrors.guardian_consent_accepted[0]}</p>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Declaration Checkbox */}
             <div className="border-2 border-[#AC3D47] bg-[#FDF5F6] p-4">
               <label className="flex items-start gap-2.5 cursor-pointer">
@@ -1272,7 +1327,16 @@ export default function ApplyWizardPage({
               <button
                 type="button"
                 onClick={handleSubmitFinal}
-                disabled={submitting || !formData.declaration_accepted}
+                disabled={
+                  submitting ||
+                  !formData.declaration_accepted ||
+                  Boolean(
+                    REQUIRE_GUARDIAN_CONSENT_FOR_MINORS &&
+                      formData.dob &&
+                      isApplicantMinor(formData.dob) &&
+                      (!formData.guardian_consent_accepted || !formData.guardian_consent_name)
+                  )
+                }
                 className="gov-btn gov-btn-primary text-sm font-bold w-full sm:w-auto min-h-[44px] disabled:opacity-50"
               >
                 {submitting ? (lang === 'kn' ? 'ಅರ್ಜಿ ಸಲ್ಲಿಸಲಾಗುತ್ತಿದೆ...' : 'Submitting Application...') : t.submit_application}

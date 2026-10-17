@@ -63,6 +63,8 @@ export default function LoginPage() {
       } else {
         if (data.mustChangePassword) {
           router.push('/change-password');
+        } else if (data.needsConsent) {
+          router.push('/accept-terms');
         } else if (data.user.role === 'admin' || data.user.role === 'reviewer') {
           router.push('/admin');
         } else {
@@ -183,6 +185,19 @@ export default function LoginPage() {
             >
               {resending ? "Sending verification email..." : "Resend confirmation email"}
             </button>
+          </div>
+          <div className="pt-2 border-t border-gray-100 flex items-center justify-center gap-3 text-[11px] text-gray-500">
+            <Link href="/privacy" className="hover:text-[#AC3D47] hover:underline">
+              Privacy Policy
+            </Link>
+            <span>•</span>
+            <Link href="/terms" className="hover:text-[#AC3D47] hover:underline">
+              Terms of Use
+            </Link>
+            <span>•</span>
+            <Link href="/faq" className="hover:text-[#AC3D47] hover:underline">
+              FAQ
+            </Link>
           </div>
         </div>
       </div>

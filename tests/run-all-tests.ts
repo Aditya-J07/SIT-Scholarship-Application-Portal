@@ -77,7 +77,11 @@ import {
   step2Schema,
   step3Schema,
   step5Schema,
+  fullApplicationSchema,
+  isApplicantMinor,
 } from "../src/lib/schemas/application";
+import { PRIVACY_VERSION, REQUIRE_GUARDIAN_CONSENT_FOR_MINORS } from "../src/lib/constants";
+import sitemap from "../src/app/sitemap";
 import { evaluateEligibility } from "../src/lib/eligibility";
 import { calculateMeritScore, rankApplicantsByYear } from "../src/lib/merit";
 import { generateApplicationPdf } from "../src/lib/pdf/generatePdf";
@@ -1961,6 +1965,166 @@ async function runTests() {
       delete process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
     }
   }
+
+  // 17. Phase 3 Part 1: Public Pages, Consent Versioning & Minor Guardian Consent Tests
+  console.log("\n--- 17. Phase 3 Part 1: Public Pages, Consent Versioning & Minor Guardian Consent Tests ---");
+
+  // A. PRIVACY_VERSION constant
+  assert(
+    typeof PRIVACY_VERSION === "string" && PRIVACY_VERSION === "2026-1",
+    "PRIVACY_VERSION constant is defined and matches '2026-1'"
+  );
+
+  // B. Minor age detection logic
+  const formatYMD = (year: number, monthIndex: number, day: number) => {
+    const y = String(year);
+    const m = String(monthIndex + 1).padStart(2, "0");
+    const d = String(day).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  };
+
+  const now = new Date();
+  const minorDob = formatYMD(now.getFullYear() - 17, now.getMonth(), now.getDate());
+  const adultDob = formatYMD(now.getFullYear() - 19, now.getMonth(), now.getDate());
+
+  assert(
+    isApplicantMinor(minorDob, now) === true,
+    "isApplicantMinor returns true for 17-year old applicant"
+  );
+  assert(
+    isApplicantMinor(adultDob, now) === false,
+    "isApplicantMinor returns false for 19-year old applicant"
+  );
+
+  // Exact 18th birthday boundary
+  const exact18Dob = formatYMD(now.getFullYear() - 18, now.getMonth(), now.getDate());
+  assert(
+    isApplicantMinor(exact18Dob, now) === false,
+    "isApplicantMinor returns false on exact 18th birthday"
+  );
+
+  const tomorrowOfBirthYear = new Date(now.getFullYear() - 18, now.getMonth(), now.getDate() + 1);
+  const dayBefore18Dob = formatYMD(
+    tomorrowOfBirthYear.getFullYear(),
+    tomorrowOfBirthYear.getMonth(),
+    tomorrowOfBirthYear.getDate()
+  );
+  assert(
+    isApplicantMinor(dayBefore18Dob, now) === true,
+    "isApplicantMinor returns true on day before 18th birthday"
+  );
+
+  // C. Full application schema validation with minor guardian consent
+  const baseValidApp = {
+    scholarship_code: "MNC",
+    full_name: "RAHUL KUMAR",
+    usn: "1SI23CS045",
+    dob: minorDob,
+    nationality: "Indian",
+    father_or_guardian_name: "SURESH KUMAR",
+    address: "123 SIT Main Road, Tumakuru",
+    pincode: "572103",
+    mobile: "9876543210",
+    email: "rahul@sit.ac.in",
+    parent_occupation: "Farmer",
+    family_annual_income: 150000,
+    income_cert_issue_date: "2024-01-15",
+    admitted_through_cet: true,
+    last_exam_passed: "II PUC",
+    marks_obtained: 540,
+    marks_gross_total: 600,
+    course: "Computer Science and Engineering",
+    year_of_study: 1,
+    semester: 1,
+    course_duration_years: 4,
+    final_exam_month_year: "2028-06",
+    annual_fee: 90000,
+    applied_earlier: false,
+    getting_other_scholarship: false,
+    scholarship_amount_required_per_month: 2500,
+    bank_acc_holder_name: "RAHUL KUMAR",
+    bank_acc_no: "123456789012",
+    confirm_bank_acc_no: "123456789012",
+    bank_name: "State Bank of India",
+    bank_branch: "SIT Campus Branch",
+    bank_ifsc: "SBIN0040523",
+    declaration_accepted: true,
+  };
+
+  // Minor missing guardian consent name must fail
+  const minorMissingName = fullApplicationSchema.safeParse({
+    ...baseValidApp,
+    guardian_consent_accepted: true,
+  });
+  assert(
+    !minorMissingName.success &&
+      minorMissingName.error?.issues.some((i) => i.path.includes("guardian_consent_name")),
+    "Minor applicant missing guardian consent name fails schema validation"
+  );
+
+  // Minor missing guardian consent checkbox must fail
+  const minorMissingCheckbox = fullApplicationSchema.safeParse({
+    ...baseValidApp,
+    guardian_consent_name: "SURESH KUMAR",
+    guardian_consent_accepted: false,
+  });
+  assert(
+    !minorMissingCheckbox.success &&
+      minorMissingCheckbox.error?.issues.some((i) => i.path.includes("guardian_consent_accepted")),
+    "Minor applicant with unchecked guardian consent fails schema validation"
+  );
+
+  // Minor with guardian name and accepted checkbox passes
+  const minorValid = fullApplicationSchema.safeParse({
+    ...baseValidApp,
+    guardian_consent_name: "SURESH KUMAR",
+    guardian_consent_accepted: true,
+  });
+  assert(
+    minorValid.success,
+    "Minor applicant with full guardian consent passes schema validation"
+  );
+
+  // Adult applicant passes without guardian consent
+  const adultValid = fullApplicationSchema.safeParse({
+    ...baseValidApp,
+    dob: adultDob,
+  });
+  assert(
+    adultValid.success,
+    "Adult applicant passes schema validation without guardian consent fields"
+  );
+
+  // D. Sitemap verification
+  const sitemapEntries = sitemap();
+  assert(
+    Array.isArray(sitemapEntries) && sitemapEntries.length > 0,
+    "Sitemap returns valid array of URL entries"
+  );
+  assert(
+    sitemapEntries.some((e) => e.url.endsWith("/privacy")),
+    "Sitemap includes /privacy URL"
+  );
+  assert(
+    sitemapEntries.some((e) => e.url.endsWith("/terms")),
+    "Sitemap includes /terms URL"
+  );
+  assert(
+    sitemapEntries.some((e) => e.url.endsWith("/faq")),
+    "Sitemap includes /faq URL"
+  );
+  assert(
+    sitemapEntries.some((e) => e.url.endsWith("/accessibility")),
+    "Sitemap includes /accessibility URL"
+  );
+  assert(
+    !sitemapEntries.some((e) => e.url.includes("/admin")),
+    "Sitemap strictly excludes private /admin URLs"
+  );
+  assert(
+    !sitemapEntries.some((e) => e.url.includes("/dashboard")),
+    "Sitemap strictly excludes private /dashboard URLs"
+  );
 
   console.log("\n====================================================");
   console.log("TEST SUITE EXECUTION SUMMARY:");

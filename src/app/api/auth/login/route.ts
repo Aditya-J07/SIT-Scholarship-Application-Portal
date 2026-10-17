@@ -11,6 +11,7 @@ import {
 } from "@/lib/rate-limit";
 import { verifyStateChangingOrigin } from "@/lib/auth/origin-guard";
 import { verifyTurnstileToken } from "@/lib/auth/turnstile";
+import { PRIVACY_VERSION } from "@/lib/constants";
 
 export async function POST(request: Request) {
   // 1. CSRF Origin Verification
@@ -111,9 +112,13 @@ export async function POST(request: Request) {
       ip: clientIp,
     });
 
+    const needsConsent =
+      profile.role === "student" && profile.consent_version !== PRIVACY_VERSION;
+
     return NextResponse.json({
       success: true,
       mustChangePassword: Boolean(profile.must_change_password),
+      needsConsent,
       user: {
         id: profile.id,
         email: profile.email,

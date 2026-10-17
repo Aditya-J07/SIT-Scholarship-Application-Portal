@@ -387,7 +387,25 @@ export async function generateApplicationPdf(
     color: black,
   });
 
-  currY -= 14;
+  currY -= 12;
+
+  // Parental Consent for Minors (< 18 years on application date)
+  // TODO [COLLEGE DECISION REQUIRED]: Legal confirmation required for minor consent threshold and declaration wording.
+  const applicantAge = appData.dob ? calculateAge(appData.dob) : 18;
+  if (applicantAge < 18) {
+    const guardianName = appData.guardian_consent_name || appData.father_or_guardian_name || 'Parent/Guardian';
+    const minorConsentNotice = `TODO [COLLEGE DECISION REQUIRED]: Guardian Consent: I, ${guardianName}, lawful parent/guardian of minor applicant, consent to data processing under DPDP Act 2023.`;
+    page.drawText(minorConsentNotice, {
+      x: margin + 4,
+      y: currY,
+      size: 6.5,
+      font: fontBold,
+      color: primaryBrand,
+    });
+    currY -= 12;
+  }
+
+  currY -= 2;
 
   // Signatures Section
   const sigBoxHeight = 35;

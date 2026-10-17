@@ -33,6 +33,8 @@ export interface UserProfile {
   bank_branch?: string;
   bank_ifsc?: string;
   last_seen_at?: string;
+  consent_accepted_at?: string;
+  consent_version?: string;
   created_at: string;
   updated_at: string;
 }
@@ -121,8 +123,10 @@ export interface ApplicationFormData {
   bank_branch: string;
   bank_ifsc: string;
 
-  // Declaration
+  // Declaration & Minor Consent
   declaration_accepted?: boolean;
+  guardian_consent_name?: string;
+  guardian_consent_accepted?: boolean;
 }
 
 export interface ApplicationComputed {

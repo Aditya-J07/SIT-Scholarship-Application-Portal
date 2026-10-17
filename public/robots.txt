@@ -5,13 +5,25 @@ Disallow: /admin/
 Disallow: /admin-login
 Disallow: /api/
 Disallow: /dashboard
+Disallow: /dashboard/
+Disallow: /apply
 Disallow: /apply/
 Disallow: /profile
+Disallow: /profile/
 Disallow: /applications/
 Disallow: /change-password
 Disallow: /reset-password
+Disallow: /accept-terms
 
 Allow: /
+Allow: /scholarships
 Allow: /scholarships/
+Allow: /privacy
+Allow: /terms
+Allow: /faq
+Allow: /accessibility
+Allow: /login
+Allow: /register
 Allow: /verify/
-Allow: /guidelines
+
+Sitemap: https://scholarships.sit.ac.in/sitemap.xml

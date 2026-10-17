@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useLanguage } from './LanguageToggle';
 
 export default function Footer() {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
 
   return (
     <footer className="mt-auto border-t border-gray-300 bg-[#F8FAFC] text-gray-700 text-xs">
@@ -260,8 +260,25 @@ export default function Footer() {
 
         </div>
 
-        {/* DPDP Act 2023 Compliance & Privacy Notice */}
+        {/* Public & Legal Links & DPDP Notice */}
         <div className="border-t border-gray-200 pt-4 pb-2">
+          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs font-semibold text-[#AC3D47] mb-3">
+            <Link href="/privacy" className="hover:underline">
+              {lang === 'kn' ? 'ಗೌಪ್ಯತಾ ನೀತಿ (DPDP Act 2023)' : 'Privacy Policy (DPDP)'}
+            </Link>
+            <span className="text-gray-300">•</span>
+            <Link href="/terms" className="hover:underline">
+              {lang === 'kn' ? 'ಬಳಕೆಯ ನಿಯಮಗಳು' : 'Terms of Use'}
+            </Link>
+            <span className="text-gray-300">•</span>
+            <Link href="/faq" className="hover:underline">
+              {lang === 'kn' ? 'ಸಾಮಾನ್ಯ ಪ್ರಶ್ನೆಗಳು (FAQ)' : 'Frequently Asked Questions (FAQ)'}
+            </Link>
+            <span className="text-gray-300">•</span>
+            <Link href="/accessibility" className="hover:underline">
+              {lang === 'kn' ? 'ಪ್ರವೇಶಸಾಧ್ಯತೆ ಹೇಳಿಕೆ' : 'Accessibility Statement'}
+            </Link>
+          </div>
           <div className="bg-white border border-gray-300 p-3 text-gray-600 leading-relaxed text-[11px]">
             <span className="font-bold text-[#AC3D47]">{t.footer_dpdp_title} </span>
             {t.footer_dpdp_text}

@@ -1,4 +1,17 @@
 import { z } from 'zod';
+import { REQUIRE_GUARDIAN_CONSENT_FOR_MINORS } from '../constants';
+
+export function isApplicantMinor(dobStr: string, asOfDate: Date = new Date()): boolean {
+  const parts = dobStr.split('-').map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) return false;
+  const [bYear, bMonth, bDay] = parts;
+  let age = asOfDate.getFullYear() - bYear;
+  const m = (asOfDate.getMonth() + 1) - bMonth;
+  if (m < 0 || (m === 0 && asOfDate.getDate() < bDay)) {
+    age--;
+  }
+  return age < 18;
+}
 
 export const step1Fields = {
   scholarship_code: z.string().min(1, 'Scholarship must be selected'),
@@ -177,6 +190,8 @@ export const step5Fields = {
 
 export const step7Fields = {
   declaration_accepted: z.literal(true),
+  guardian_consent_name: z.string().trim().optional(),
+  guardian_consent_accepted: z.boolean().optional(),
 };
 
 // Refinement for Step 3
@@ -240,6 +255,26 @@ function refineStep5(data: any, ctx: z.RefinementCtx) {
   }
 }
 
+// Refinement for Step 7 (Minor Parental Consent)
+function refineStep7(data: any, ctx: z.RefinementCtx) {
+  if (REQUIRE_GUARDIAN_CONSENT_FOR_MINORS && data.dob && isApplicantMinor(data.dob)) {
+    if (!data.guardian_consent_name || data.guardian_consent_name.trim().length < 3) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['guardian_consent_name'],
+        message: 'Guardian name is required for applicants under 18 years of age (minimum 3 characters)',
+      });
+    }
+    if (data.guardian_consent_accepted !== true) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['guardian_consent_accepted'],
+        message: 'Guardian consent checkbox is mandatory for applicants under 18 years of age',
+      });
+    }
+  }
+}
+
 // Step Schemas (Strict: rejects unknown client keys per H2 / B2)
 export const step1Schema = z.object(step1Fields).strict();
 export const step2Schema = z.object(step2Fields).strict();
@@ -262,6 +297,7 @@ export const fullApplicationSchema = z
     refineStep3(data, ctx);
     refineStep4(data, ctx);
     refineStep5(data, ctx);
+    refineStep7(data, ctx);
   });
 
 export type Step1Data = z.infer<typeof step1Schema>;

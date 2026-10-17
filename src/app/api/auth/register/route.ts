@@ -10,6 +10,7 @@ import {
 } from "@/lib/rate-limit";
 import { verifyStateChangingOrigin } from "@/lib/auth/origin-guard";
 import { verifyTurnstileToken } from "@/lib/auth/turnstile";
+import { PRIVACY_VERSION } from "@/lib/constants";
 import { getAdminClient } from "@/utils/supabase/admin";
 
 export async function POST(request: Request) {
@@ -108,7 +109,7 @@ export async function POST(request: Request) {
           .from("profiles")
           .update({
             consent_accepted_at: new Date().toISOString(),
-            consent_version: "2026-v1",
+            consent_version: PRIVACY_VERSION,
           })
           .eq("id", authData.user.id);
       } catch (consentErr) {
@@ -121,7 +122,7 @@ export async function POST(request: Request) {
         action: "USER_REGISTERED",
         entity: "profiles",
         entity_id: authData.user.id,
-        meta: { role: "student", consent_version: "2026-v1" },
+        meta: { role: "student", consent_version: PRIVACY_VERSION },
         ip: clientIp,
       });
     }

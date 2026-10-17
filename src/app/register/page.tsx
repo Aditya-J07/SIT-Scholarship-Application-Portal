@@ -183,7 +183,14 @@ export default function RegisterPage() {
               />
               <span className="text-[11px] text-gray-700 leading-relaxed">
                 <strong>{lang === 'kn' ? 'ಡಿಪಿಡಿಪಿ ಕಾಯ್ದೆ 2023 ರ ಸಮ್ಮತಿ: ' : 'DPDP Act 2023 Consent: '}</strong>
-                {t.dpdp_consent}
+                {t.dpdp_consent}{' '}
+                <Link href="/privacy" target="_blank" className="text-[#AC3D47] font-semibold underline hover:text-[#8D323A]">
+                  {lang === 'kn' ? 'ಗೌಪ್ಯತಾ ನೀತಿ' : 'Privacy Policy'}
+                </Link>{' '}
+                &{' '}
+                <Link href="/terms" target="_blank" className="text-[#AC3D47] font-semibold underline hover:text-[#8D323A]">
+                  {lang === 'kn' ? 'ಬಳಕೆಯ ನಿಯಮಗಳು' : 'Terms of Use'}
+                </Link>.
               </span>
             </label>
           </div>
@@ -207,11 +214,26 @@ export default function RegisterPage() {
           </button>
         </form>
 
-        <div className="mt-5 text-center text-xs text-gray-600 border-t border-gray-200 pt-4">
-          {t.already_have_account}{' '}
-          <Link href="/login" className="font-bold text-[#AC3D47] hover:underline">
-            {t.login_link}
-          </Link>
+        <div className="mt-5 text-center text-xs text-gray-600 border-t border-gray-200 pt-4 space-y-2">
+          <div>
+            {t.already_have_account}{' '}
+            <Link href="/login" className="font-bold text-[#AC3D47] hover:underline">
+              {t.login_link}
+            </Link>
+          </div>
+          <div className="pt-2 border-t border-gray-100 flex items-center justify-center gap-3 text-[11px] text-gray-500">
+            <Link href="/privacy" className="hover:text-[#AC3D47] hover:underline">
+              {lang === 'kn' ? 'ಗೌಪ್ಯತಾ ನೀತಿ' : 'Privacy Policy'}
+            </Link>
+            <span>•</span>
+            <Link href="/terms" className="hover:text-[#AC3D47] hover:underline">
+              {lang === 'kn' ? 'ನಿಯಮಗಳು' : 'Terms of Use'}
+            </Link>
+            <span>•</span>
+            <Link href="/faq" className="hover:text-[#AC3D47] hover:underline">
+              {lang === 'kn' ? 'ಪ್ರಶ್ನೋತ್ತರ' : 'FAQ'}
+            </Link>
+          </div>
         </div>
       </div>
     </div>

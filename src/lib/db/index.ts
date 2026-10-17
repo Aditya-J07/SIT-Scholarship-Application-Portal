@@ -48,6 +48,8 @@ function mapProfileFromDb(row: Record<string, unknown>): UserProfile {
     bank_branch: row.bank_branch ? String(row.bank_branch) : undefined,
     bank_ifsc: row.bank_ifsc ? String(row.bank_ifsc) : undefined,
     last_seen_at: row.last_seen_at ? String(row.last_seen_at) : undefined,
+    consent_accepted_at: row.consent_accepted_at ? String(row.consent_accepted_at) : undefined,
+    consent_version: row.consent_version ? String(row.consent_version) : undefined,
     created_at: String(row.created_at || new Date().toISOString()),
     updated_at: String(row.updated_at || new Date().toISOString()),
   };
