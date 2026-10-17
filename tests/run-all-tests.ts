@@ -98,6 +98,9 @@ import { ALLOWED_FILE_KINDS, isValidFileKind, detectMimeFromBytes } from "../src
 import { checkRateLimit } from "../src/lib/rate-limit";
 import { verifyStateChangingOrigin } from "../src/lib/auth/origin-guard";
 import { validateRedirectPath } from "../src/lib/auth/redirect-validator";
+import { renderEmail } from "../src/lib/email/templates";
+import { sendEmailNotification } from "../src/lib/email/client";
+import { EmailEventType } from "../src/lib/email/types";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
 
@@ -2125,6 +2128,152 @@ async function runTests() {
     !sitemapEntries.some((e) => e.url.includes("/dashboard")),
     "Sitemap strictly excludes private /dashboard URLs"
   );
+
+  // 18. Phase 3 Part 2: Email Templates & Zero-PII Notification Tests
+  console.log("\n--- 18. Phase 3 Part 2: Email Templates & Zero-PII Notification Tests ---");
+
+  const sampleEmailInput = {
+    refNo: "SIT/2026/0123",
+    studentName: "RAHUL KUMAR",
+    scholarshipName: "MNC Scholarship",
+    remark: "Please re-upload a clear copy of your income certificate.",
+    deadlineDate: "2026-10-31",
+  };
+
+  const allEmailTypes: EmailEventType[] = [
+    "submitted",
+    "correction_requested",
+    "shortlisted",
+    "accepted",
+    "rejected",
+    "withdrawn",
+    "deadline_reminder",
+  ];
+
+  for (const eventType of allEmailTypes) {
+    const rendered = renderEmail(eventType, sampleEmailInput);
+
+    // Template rendering validity
+    assert(
+      typeof rendered.subject === "string" && rendered.subject.length > 0,
+      `Email template '${eventType}' renders a non-empty subject`
+    );
+    assert(
+      typeof rendered.text === "string" && rendered.text.includes("SIT/2026/0123"),
+      `Email template '${eventType}' renders plain text containing reference number`
+    );
+    assert(
+      typeof rendered.html === "string" && rendered.html.includes("SIT/2026/0123"),
+      `Email template '${eventType}' renders HTML containing reference number`
+    );
+
+    // Bilingual content check
+    assert(
+      rendered.text.includes("TODO: review by college") || rendered.html.includes("TODO: review by college"),
+      `Email template '${eventType}' includes Kannada text with 'TODO: review by college' mark`
+    );
+
+    // Subject privacy rule: MUST contain reference number and NOT student PII
+    assert(
+      rendered.subject.includes("SIT/2026/0123"),
+      `Email subject for '${eventType}' includes reference number`
+    );
+    assert(
+      !rendered.subject.includes("RAHUL KUMAR"),
+      `Email subject for '${eventType}' strictly excludes student full name`
+    );
+    assert(
+      !rendered.subject.includes("rahul@sit.ac.in"),
+      `Email subject for '${eventType}' strictly excludes student email`
+    );
+    assert(
+      !rendered.subject.includes("9876543210"),
+      `Email subject for '${eventType}' strictly excludes phone number`
+    );
+    assert(
+      !rendered.subject.includes("123456789012"),
+      `Email subject for '${eventType}' strictly excludes bank account number`
+    );
+  }
+
+  // Zero-PII in logs and fail-safe / skip behavior verification
+  const loggedMessages: string[] = [];
+  const origWarn = console.warn;
+  const origError = console.error;
+  const origLog = console.log;
+
+  console.warn = (msg: unknown) => {
+    loggedMessages.push(String(msg));
+  };
+  console.error = (msg: unknown) => {
+    loggedMessages.push(String(msg));
+  };
+  console.log = (msg: unknown) => {
+    loggedMessages.push(String(msg));
+  };
+
+  try {
+    // 1. Development mode: SMTP unset -> logs warning with ref number only, returns true
+    const devResult = await sendEmailNotification({
+      to: "rahul.secret@sit.ac.in",
+      type: "submitted",
+      input: {
+        refNo: "SIT/2026/9999",
+        studentName: "CONFIDENTIAL STUDENT",
+        scholarshipName: "SSKA Scholarship",
+      },
+    });
+
+    assert(devResult === true, "Development notification without SMTP succeeds without blocking");
+    assert(
+      loggedMessages.some((m) => m.includes("[NOTIFICATION_SKIPPED]") && m.includes("SIT/2026/9999")),
+      "Development log records [NOTIFICATION_SKIPPED] with reference number"
+    );
+    assert(
+      !loggedMessages.some((m) => m.includes("rahul.secret@sit.ac.in")),
+      "Development log strictly excludes student email address"
+    );
+    assert(
+      !loggedMessages.some((m) => m.includes("CONFIDENTIAL STUDENT")),
+      "Development log strictly excludes student name"
+    );
+
+    // 2. Production mode: SMTP unset -> fails safely, returns false, logs error without PII
+    loggedMessages.length = 0;
+    const origEnv = process.env.NODE_ENV;
+    (process.env as Record<string, string | undefined>).NODE_ENV = "production";
+
+    const prodResult = await sendEmailNotification({
+      to: "student.prod@sit.ac.in",
+      type: "accepted",
+      input: {
+        refNo: "SIT/2026/8888",
+        studentName: "AWARD RECIPIENT",
+        scholarshipName: "MNC Scholarship",
+      },
+    });
+
+    (process.env as Record<string, string | undefined>).NODE_ENV = origEnv;
+
+    assert(prodResult === false, "Production notification without SMTP fails safely (returns false)");
+    assert(
+      loggedMessages.some((m) => m.includes("[NOTIFICATION_FAILED]") && m.includes("SIT/2026/8888")),
+      "Production log records [NOTIFICATION_FAILED] with reference number"
+    );
+    assert(
+      !loggedMessages.some((m) => m.includes("student.prod@sit.ac.in")),
+      "Production log strictly excludes recipient email"
+    );
+    assert(
+      !loggedMessages.some((m) => m.includes("AWARD RECIPIENT")),
+      "Production log strictly excludes recipient name"
+    );
+  } finally {
+    console.warn = origWarn;
+    console.error = origError;
+    console.log = origLog;
+  }
+
 
   console.log("\n====================================================");
   console.log("TEST SUITE EXECUTION SUMMARY:");

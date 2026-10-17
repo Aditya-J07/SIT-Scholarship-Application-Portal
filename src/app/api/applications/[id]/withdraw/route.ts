@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAuthorizedSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { getClientIp } from '@/lib/rate-limit';
+import { sendNotification } from '@/lib/notifications';
 
 export async function POST(
   request: Request,
@@ -43,6 +44,19 @@ export async function POST(
     meta: { ref_no: application.ref_no },
     ip: clientIp,
   });
+
+  const student = await db.findUserById(application.student_id);
+  const scholarship = await db.findScholarshipByCode(application.data.scholarship_code || 'MNC');
+  if (student) {
+    await sendNotification({
+      toEmail: student.email,
+      toMobile: application.data.mobile || student.mobile,
+      studentName: application.data.full_name || student.full_name,
+      type: 'APPLICATION_WITHDRAWN',
+      refNo: application.ref_no,
+      scholarshipName: scholarship?.name,
+    });
+  }
 
   return NextResponse.json({ success: true, application: updated });
 }
