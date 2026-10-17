@@ -1,11 +1,14 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import Link from "next/link";
 import { ArrowLeft, Mail, CheckCircle2, AlertCircle } from "lucide-react";
+import { Turnstile, TurnstileRef } from "@/components/Turnstile";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const turnstileRef = useRef<TurnstileRef>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -20,7 +23,7 @@ export default function ForgotPasswordPage() {
       const res = await fetch("/api/auth/forgot-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, turnstileToken }),
       });
 
       const data = await res.json();
@@ -28,6 +31,8 @@ export default function ForgotPasswordPage() {
 
       if (!res.ok) {
         setError(data.error?.message || "Failed to process request. Please try again.");
+        turnstileRef.current?.reset();
+        setTurnstileToken("");
         return;
       }
 
@@ -38,6 +43,8 @@ export default function ForgotPasswordPage() {
     } catch {
       setLoading(false);
       setError("Network communication error. Please check your connection and try again.");
+      turnstileRef.current?.reset();
+      setTurnstileToken("");
     }
   };
 
@@ -101,6 +108,16 @@ export default function ForgotPasswordPage() {
                 className="gov-input"
               />
             </div>
+
+            <Turnstile
+              ref={turnstileRef}
+              onVerify={(token) => {
+                setTurnstileToken(token);
+                setError(null);
+              }}
+              onExpire={() => setTurnstileToken('')}
+              onError={(err) => setError(err || 'Security verification failed')}
+            />
 
             <button
               type="submit"

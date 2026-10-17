@@ -1,15 +1,18 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useLanguage } from '@/components/LanguageToggle';
+import { Turnstile, TurnstileRef } from '@/components/Turnstile';
 
 export default function LoginPage() {
   const router = useRouter();
   const { t } = useLanguage();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const turnstileRef = useRef<TurnstileRef>(null);
   const [error, setError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -47,7 +50,7 @@ export default function LoginPage() {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, turnstileToken }),
       });
 
       const data = await res.json();
@@ -55,6 +58,8 @@ export default function LoginPage() {
 
       if (!res.ok) {
         setError(data.error?.message || 'Invalid credentials');
+        turnstileRef.current?.reset();
+        setTurnstileToken('');
       } else {
         if (data.mustChangePassword) {
           router.push('/change-password');
@@ -68,6 +73,8 @@ export default function LoginPage() {
     } catch {
       setLoading(false);
       setError('Connection error. Please try again.');
+      turnstileRef.current?.reset();
+      setTurnstileToken('');
     }
   };
 
@@ -140,6 +147,16 @@ export default function LoginPage() {
               className="gov-input"
             />
           </div>
+
+          <Turnstile
+            ref={turnstileRef}
+            onVerify={(token) => {
+              setTurnstileToken(token);
+              setError(null);
+            }}
+            onExpire={() => setTurnstileToken('')}
+            onError={(err) => setError(err || 'Security verification failed')}
+          />
 
           <button
             type="submit"

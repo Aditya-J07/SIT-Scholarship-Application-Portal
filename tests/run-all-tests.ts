@@ -109,6 +109,7 @@ import { GET as getAdminUsersRoute } from "../src/app/api/admin/users/route";
 import { POST as loginRoute } from "../src/app/api/auth/login/route";
 import { resetAdminClient } from "../src/utils/supabase/admin";
 import { createClient as createServerClient } from "../src/utils/supabase/server";
+import { verifyTurnstileToken } from "../src/lib/auth/turnstile";
 
 let passedTests = 0;
 let totalTests = 0;
@@ -1345,7 +1346,11 @@ async function runTests() {
         new Request("http://localhost:3000/api/auth/login", {
           method: "POST",
           headers: { origin: "http://localhost:3000", "content-type": "application/json" },
-          body: JSON.stringify({ email: emailAdm, password: "TestPassword123!@#" }),
+          body: JSON.stringify({
+            email: emailAdm,
+            password: "TestPassword123!@#",
+            turnstileToken: "test-turnstile-token",
+          }),
         })
       );
       const { data: refreshedProfile } = await testAdmin
@@ -1640,6 +1645,94 @@ async function runTests() {
     "MNC"
   );
   assert(year2Backlog.backlog_disqualified && !year2Backlog.passed_all_hard_rules, "Backlog history blocks Year 2 student for MNC");
+
+  // 16. Cloudflare Turnstile CAPTCHA & Security Tests
+  console.log("\n--- 16. Cloudflare Turnstile CAPTCHA & Security Tests ---");
+  const origTurnstileEnv = {
+    NODE_ENV: process.env.NODE_ENV,
+    TURNSTILE_SECRET_KEY: process.env.TURNSTILE_SECRET_KEY,
+    NEXT_PUBLIC_TURNSTILE_SITE_KEY: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY,
+  };
+
+  try {
+    // A. In non-production (development), missing keys skip check with console warning and return success: true
+    (process.env as any).NODE_ENV = "development";
+    delete process.env.TURNSTILE_SECRET_KEY;
+    delete process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+    const devMissingKeys = await verifyTurnstileToken("any-token", "127.0.0.1");
+    assert(
+      devMissingKeys.success === true,
+      "Turnstile: In development mode, missing keys skip validation (success: true)"
+    );
+
+    // B. In production, missing keys MUST fail closed (success: false) with clear error, NEVER fail open
+    (process.env as any).NODE_ENV = "production";
+    delete process.env.TURNSTILE_SECRET_KEY;
+    delete process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+    const prodMissingKeys = await verifyTurnstileToken("any-token", "127.0.0.1");
+    assert(
+      prodMissingKeys.success === false &&
+        Boolean(prodMissingKeys.message?.includes("misconfigured")),
+      "Turnstile: In production mode, missing keys fail closed (success: false)"
+    );
+
+    // C. Missing secret key in production fails closed
+    (process.env as any).NODE_ENV = "production";
+    delete process.env.TURNSTILE_SECRET_KEY;
+    process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY = "1x00000000000000000000AA";
+    const prodMissingSecret = await verifyTurnstileToken("any-token", "127.0.0.1");
+    assert(
+      prodMissingSecret.success === false,
+      "Turnstile: In production mode, missing secret key fails closed"
+    );
+
+    // D. Missing site key in production fails closed
+    (process.env as any).NODE_ENV = "production";
+    process.env.TURNSTILE_SECRET_KEY = "1x0000000000000000000000000000000AA";
+    delete process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+    const prodMissingSite = await verifyTurnstileToken("any-token", "127.0.0.1");
+    assert(
+      prodMissingSite.success === false,
+      "Turnstile: In production mode, missing site key fails closed"
+    );
+
+    // E. When keys are configured, missing or empty token fails with required error message
+    (process.env as any).NODE_ENV = "production";
+    process.env.TURNSTILE_SECRET_KEY = "1x0000000000000000000000000000000AA";
+    process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY = "1x00000000000000000000AA";
+
+    const emptyToken = await verifyTurnstileToken("", "127.0.0.1");
+    assert(
+      emptyToken.success === false &&
+        Boolean(emptyToken.message?.includes("Please complete the CAPTCHA")),
+      "Turnstile: Empty token fails with 'Please complete the CAPTCHA' error"
+    );
+
+    const nullToken = await verifyTurnstileToken(null, "127.0.0.1");
+    assert(
+      nullToken.success === false &&
+        Boolean(nullToken.message?.includes("Please complete the CAPTCHA")),
+      "Turnstile: Null token fails with 'Please complete the CAPTCHA' error"
+    );
+
+    const whitespaceToken = await verifyTurnstileToken("   \t  ", "127.0.0.1");
+    assert(
+      whitespaceToken.success === false,
+      "Turnstile: Whitespace-only token fails verification"
+    );
+  } finally {
+    (process.env as any).NODE_ENV = origTurnstileEnv.NODE_ENV;
+    if (origTurnstileEnv.TURNSTILE_SECRET_KEY !== undefined) {
+      process.env.TURNSTILE_SECRET_KEY = origTurnstileEnv.TURNSTILE_SECRET_KEY;
+    } else {
+      delete process.env.TURNSTILE_SECRET_KEY;
+    }
+    if (origTurnstileEnv.NEXT_PUBLIC_TURNSTILE_SITE_KEY !== undefined) {
+      process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY = origTurnstileEnv.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+    } else {
+      delete process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+    }
+  }
 
   console.log("\n====================================================");
   console.log("TEST SUITE EXECUTION SUMMARY:");

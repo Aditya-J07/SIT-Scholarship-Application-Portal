@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useLanguage } from '@/components/LanguageToggle';
+import { Turnstile, TurnstileRef } from '@/components/Turnstile';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -16,6 +17,8 @@ export default function RegisterPage() {
     confirm_password: '',
     consent_accepted: false,
   });
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const turnstileRef = useRef<TurnstileRef>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -39,7 +42,7 @@ export default function RegisterPage() {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({ ...formData, turnstileToken }),
       });
 
       const data = await res.json();
@@ -47,6 +50,8 @@ export default function RegisterPage() {
 
       if (!res.ok) {
         setError(data.error?.message || (lang === 'kn' ? 'ನೋಂದಣಿ ವಿಫಲವಾಗಿದೆ' : 'Registration failed'));
+        turnstileRef.current?.reset();
+        setTurnstileToken('');
       } else {
         router.push('/dashboard');
         router.refresh();
@@ -54,6 +59,8 @@ export default function RegisterPage() {
     } catch {
       setLoading(false);
       setError(lang === 'kn' ? 'ಸಂಪರ್ಕ ದೋಷ. ದಯವಿಟ್ಟು ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.' : 'Connection error. Please try again.');
+      turnstileRef.current?.reset();
+      setTurnstileToken('');
     }
   };
 
@@ -180,6 +187,16 @@ export default function RegisterPage() {
               </span>
             </label>
           </div>
+
+          <Turnstile
+            ref={turnstileRef}
+            onVerify={(token) => {
+              setTurnstileToken(token);
+              setError(null);
+            }}
+            onExpire={() => setTurnstileToken('')}
+            onError={(err) => setError(err || 'Security verification failed')}
+          />
 
           <button
             type="submit"

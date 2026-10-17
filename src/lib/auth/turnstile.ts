@@ -10,16 +10,17 @@ export async function verifyTurnstileToken(
   clientIp: string
 ): Promise<{ success: boolean; message?: string }> {
   const secretKey = process.env.TURNSTILE_SECRET_KEY;
+  const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
-  if (!secretKey) {
+  if (!secretKey || !siteKey) {
     if (process.env.NODE_ENV !== "production") {
       console.warn(
-        "[Turnstile] Warning: TURNSTILE_SECRET_KEY is not configured. Skipping CAPTCHA validation in non-production mode."
+        "[Turnstile] Warning: TURNSTILE_SECRET_KEY or NEXT_PUBLIC_TURNSTILE_SITE_KEY is not configured. Skipping CAPTCHA validation in non-production mode."
       );
       return { success: true };
     }
     console.error(
-      "[Turnstile] Error: TURNSTILE_SECRET_KEY is missing in production environment. Failing closed."
+      "[Turnstile] Error: Turnstile keys (TURNSTILE_SECRET_KEY / NEXT_PUBLIC_TURNSTILE_SITE_KEY) are missing in production environment. Failing closed."
     );
     return {
       success: false,
