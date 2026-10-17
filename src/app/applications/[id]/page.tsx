@@ -16,6 +16,7 @@ export default function ApplicationDetailPage({
   const [scholarship, setScholarship] = useState<any>(null);
   const [files, setFiles] = useState<any[]>([]);
   const [remarks, setRemarks] = useState<any[]>([]);
+  const [timeline, setTimeline] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [withdrawing, setWithdrawing] = useState(false);
 
@@ -39,6 +40,7 @@ export default function ApplicationDetailPage({
             setScholarship(data.scholarship);
             setFiles(data.files || []);
             setRemarks(data.remarks || []);
+            setTimeline(data.timeline || []);
             setLoading(false);
           })
           .catch(() => router.push('/dashboard'));
@@ -71,8 +73,6 @@ export default function ApplicationDetailPage({
   }
 
   const appData = application?.data || {};
-  const statusSteps = ['submitted', 'under_review', 'shortlisted', 'accepted'];
-  const currentStatusIdx = statusSteps.indexOf(application.status);
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
@@ -98,15 +98,25 @@ export default function ApplicationDetailPage({
             </div>
           </div>
 
-          <div className="flex flex-col sm:items-end gap-2">
-            <a
-              href={`/api/applications/${application.id}/pdf`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="gov-btn gov-btn-primary text-xs font-bold py-2 px-4"
-            >
-              📥 Download / Print Official PDF
-            </a>
+          <div className="flex flex-col sm:items-end gap-2 no-print">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="gov-btn gov-btn-outline text-xs font-bold py-2 px-3"
+                title="Print this page via browser"
+              >
+                🖨️ Print Page
+              </button>
+              <a
+                href={`/api/applications/${application.id}/pdf`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="gov-btn gov-btn-primary text-xs font-bold py-2 px-4"
+              >
+                📥 Download Stored PDF
+              </a>
+            </div>
             {application.pdf_sha256 && (
               <span className="text-[10px] font-mono text-gray-500">
                 SHA-256: {application.pdf_sha256.substring(0, 16)}...
@@ -115,36 +125,47 @@ export default function ApplicationDetailPage({
           </div>
         </div>
 
-        {/* Status Timeline */}
+        {/* Status Timeline (Part 4 Item 1) */}
         <div className="border-t border-gray-200 pt-5 mt-4">
-          <div className="text-xs font-bold text-gray-700 uppercase tracking-wide mb-3">
-            Application Lifecycle & Scrutiny Timeline
+          <div className="text-xs font-bold text-gray-700 uppercase tracking-wide mb-3 flex items-center justify-between">
+            <span>Application Lifecycle & Scrutiny Timeline</span>
+            <span className="text-[11px] font-normal text-gray-500">
+              Current Status: <strong className="uppercase font-mono text-[#AC3D47]">{application.status.replace('_', ' ')}</strong>
+            </span>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
-            <div className={`p-2.5 border ${application.status !== 'draft' ? 'bg-emerald-50 border-emerald-400 text-emerald-800' : 'bg-gray-50 border-gray-300'}`}>
-              <div className="font-bold">1. Submitted</div>
-              <div className="text-[10px] text-gray-600">
-                {application.submitted_at ? new Date(application.submitted_at).toLocaleDateString() : 'Pending'}
-              </div>
-            </div>
-
-            <div className={`p-2.5 border ${currentStatusIdx >= 1 || application.status === 'under_review' ? 'bg-emerald-50 border-emerald-400 text-emerald-800' : 'bg-gray-50 border-gray-300'}`}>
-              <div className="font-bold">2. Under Review</div>
-              <div className="text-[10px] text-gray-600">Documents Verification</div>
-            </div>
-
-            <div className={`p-2.5 border ${currentStatusIdx >= 2 || application.status === 'shortlisted' ? 'bg-blue-50 border-blue-400 text-blue-800' : 'bg-gray-50 border-gray-300'}`}>
-              <div className="font-bold">3. Committee Scrutiny</div>
-              <div className="text-[10px] text-gray-600">Merit & Means Evaluation</div>
-            </div>
-
-            <div className={`p-2.5 border ${application.status === 'accepted' ? 'bg-emerald-600 text-white border-emerald-600' : application.status === 'rejected' ? 'bg-red-600 text-white border-red-600' : 'bg-gray-50 border-gray-300'}`}>
-              <div className="font-bold">4. Final Award</div>
-              <div className="text-[10px] opacity-80">
-                {application.status === 'accepted' ? 'Approved' : application.status === 'rejected' ? 'Not Selected' : 'Pending Committee'}
-              </div>
-            </div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center text-xs">
+            {timeline.length > 0 ? (
+              timeline.map((stepItem, idx) => (
+                <div
+                  key={stepItem.status}
+                  className={`p-2.5 border text-left flex flex-col justify-between ${
+                    stepItem.active
+                      ? 'bg-blue-50 border-blue-500 text-blue-950 font-medium'
+                      : stepItem.completed
+                      ? 'bg-emerald-50 border-emerald-400 text-emerald-900'
+                      : 'bg-gray-50 border-gray-300 text-gray-500'
+                  }`}
+                >
+                  <div>
+                    <div className="font-bold flex items-center gap-1">
+                      <span>{stepItem.completed ? '✓' : stepItem.active ? '●' : `${idx + 1}.`}</span>
+                      <span>{stepItem.label}</span>
+                    </div>
+                    {stepItem.note && (
+                      <div className="text-[10px] text-gray-700 mt-1 line-clamp-2">
+                        {stepItem.note}
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-gray-600 mt-2 font-mono">
+                    {stepItem.date ? new Date(stepItem.date).toLocaleDateString('en-IN') : 'Pending'}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="col-span-full text-center text-gray-500 text-xs py-2">Loading timeline...</div>
+            )}
           </div>
 
           {/* Department Recommendation Status (Item 6) */}
@@ -170,21 +191,31 @@ export default function ApplicationDetailPage({
         </div>
       </div>
 
-      {/* Needs Correction Alert */}
+      {/* Needs Correction Alert (Part 4 Item 2) */}
       {application.status === 'needs_correction' && (
-        <div className="bg-amber-50 border border-amber-300 p-4 mb-6 text-xs text-amber-900">
-          <div className="font-bold text-sm mb-1">
-            ⚠️ Scrutiny Committee Notice: Corrections Requested
+        <div className="bg-amber-50 border-2 border-amber-400 p-5 mb-6 text-xs text-amber-950" role="alert" aria-live="assertive">
+          <div className="flex items-center gap-2 font-bold text-sm mb-2 text-amber-900">
+            <span className="text-base">⚠️</span>
+            <span>Scrutiny Committee Notice: Corrections Requested</span>
           </div>
-          <p className="mb-3">
-            The scholarship reviewer has flagged an item on your application that requires your attention. Please update the necessary fields and re-submit your form.
-          </p>
-          <Link
-            href={`/apply/${appData.scholarship_code || 'MNC'}`}
-            className="gov-btn gov-btn-primary text-xs py-1.5 px-3"
-          >
-            Open Form to Edit & Resubmit →
-          </Link>
+          <div className="bg-white border border-amber-300 p-3 mb-3 text-xs text-gray-800">
+            <div className="text-[11px] font-bold text-gray-600 uppercase mb-1">Committee Message:</div>
+            <p className="font-medium whitespace-pre-wrap">
+              {remarks.find((r) => r.kind === 'correction_request' || r.visible_to_student)?.body ||
+                'The scholarship reviewer has flagged your application for corrections. Please review the missing or incomplete information and resubmit.'}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Link
+              href={`/apply/${appData.scholarship_code || 'MNC'}`}
+              className="gov-btn gov-btn-primary text-xs py-2 px-4 font-bold shadow-none"
+            >
+              ✏️ Edit and Resubmit Application →
+            </Link>
+            <span className="text-[11px] text-amber-800">
+              Your previous draft data is preserved.
+            </span>
+          </div>
         </div>
       )}
 

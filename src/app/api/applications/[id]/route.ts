@@ -51,7 +51,12 @@ export async function GET(
     uploaded_at: f.uploaded_at,
     url: `/api/files/${f.id}`,
   }));
-  const remarks = await db.listRemarksForApplication(application.id);
+
+  const allRemarks = await db.listRemarksForApplication(application.id);
+  // Never show internal remarks to the student unless marked visible_to_student
+  const remarks = session.role === 'student'
+    ? allRemarks.filter((r) => r.visible_to_student)
+    : allRemarks;
 
   // Bank account access control (H1):
   // - Owning student and Admin get decrypted full account number
@@ -91,6 +96,64 @@ export async function GET(
     delete (appData as any).bank_acc_no_encrypted;
   }
 
+  // Status timeline built from timestamps and visible remarks
+  const correctionRemark = remarks.find((r) => r.kind === 'correction_request' || r.visible_to_student);
+  const timeline: { status: string; label: string; date?: string; note?: string; active: boolean; completed: boolean }[] = [
+    {
+      status: 'submitted',
+      label: 'Submitted',
+      date: application.submitted_at || undefined,
+      active: application.status === 'submitted',
+      completed: Boolean(application.submitted_at),
+    },
+    {
+      status: 'under_review',
+      label: 'Under Review',
+      date: ['under_review', 'needs_correction', 'shortlisted', 'accepted', 'rejected'].includes(application.status)
+        ? application.updated_at
+        : undefined,
+      active: application.status === 'under_review',
+      completed: ['under_review', 'needs_correction', 'shortlisted', 'accepted', 'rejected'].includes(application.status),
+    },
+  ];
+
+  if (application.status === 'needs_correction' || correctionRemark) {
+    timeline.push({
+      status: 'needs_correction',
+      label: 'Correction Requested',
+      date: correctionRemark?.created_at || (application.status === 'needs_correction' ? application.updated_at : undefined),
+      note: correctionRemark?.body || 'Committee requested corrections on your application.',
+      active: application.status === 'needs_correction',
+      completed: application.status !== 'needs_correction',
+    });
+  }
+
+  timeline.push({
+    status: 'shortlisted',
+    label: 'Shortlisted',
+    date: ['shortlisted', 'accepted'].includes(application.status) ? application.updated_at : undefined,
+    active: application.status === 'shortlisted',
+    completed: ['shortlisted', 'accepted'].includes(application.status),
+  });
+
+  if (application.status === 'rejected') {
+    timeline.push({
+      status: 'rejected',
+      label: 'Rejected',
+      date: application.updated_at,
+      active: true,
+      completed: true,
+    });
+  } else {
+    timeline.push({
+      status: 'accepted',
+      label: 'Accepted / Awarded',
+      date: application.status === 'accepted' ? application.updated_at : undefined,
+      active: application.status === 'accepted',
+      completed: application.status === 'accepted',
+    });
+  }
+
   return NextResponse.json({
     application: {
       ...application,
@@ -99,6 +162,7 @@ export async function GET(
     scholarship,
     files,
     remarks,
+    timeline,
   });
 }
 

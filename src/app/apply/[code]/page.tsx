@@ -24,12 +24,31 @@ export default function ApplyWizardPage({
   const [application, setApplication] = useState<any>(null);
   const [scholarship, setScholarship] = useState<any>(null);
   const [files, setFiles] = useState<any[]>([]);
-  const [formData, setFormData] = useState<any>({});
+  const [formData, _setFormData] = useState<any>({});
+  const setFormData = (valueOrFn: any) => {
+    setIsDirty(true);
+    _setFormData(valueOrFn);
+  };
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
+  const [isDirty, setIsDirty] = useState(false);
+  const [lastSavedTime, setLastSavedTime] = useState<string | null>(null);
+
+  // Warn before leaving wizard with unsaved changes (Part 4 Item 3)
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = 'You have unsaved changes in your scholarship application form.';
+        return e.returnValue;
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isDirty]);
 
   // 1. Load or Initialize Application Draft
   useEffect(() => {
@@ -61,8 +80,8 @@ export default function ApplyWizardPage({
               .then((data) => {
                 setApplication(data.application);
                 setScholarship(data.scholarship);
-                setFiles(data.files || []);
-                setFormData(data.application.data || {});
+                _setFormData(data.application.data || {});
+                setIsDirty(false);
                 if (data.application.current_step && data.application.current_step >= 1 && data.application.current_step <= 7) {
                   setStep(data.application.current_step);
                 }
@@ -137,11 +156,29 @@ export default function ApplyWizardPage({
         setErrorMessage(resData.error?.message || 'Please correct errors in this section');
         if (resData.error?.fields) {
           setFieldErrors(resData.error.fields);
+          // Focus moves to the first error (Part 4 Item 5)
+          const firstKey = Object.keys(resData.error.fields)[0];
+          if (firstKey) {
+            setTimeout(() => {
+              const el =
+                document.getElementById(firstKey) ||
+                document.getElementById(`f-${firstKey}`) ||
+                document.querySelector(`[name="${firstKey}"]`);
+              if (el) {
+                (el as HTMLElement).focus();
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }
+            }, 60);
+          }
         }
         return false;
       }
 
       setApplication(resData.application);
+      setIsDirty(false);
+      setLastSavedTime(
+        new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      );
       return true;
     } catch {
       setSaving(false);
@@ -274,6 +311,8 @@ export default function ApplyWizardPage({
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
         isSaving={saving}
+        isDirty={isDirty}
+        lastSavedTime={lastSavedTime}
       />
 
       {/* Live Eligibility Status Panel */}

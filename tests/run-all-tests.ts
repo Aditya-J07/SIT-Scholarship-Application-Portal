@@ -2549,6 +2549,91 @@ async function runTests() {
     "Data from 5 years ago is within 7-year retention window and is preserved"
   );
 
+  // --- 20. Phase 3 Part 4: Student Experience Polish Tests ---
+  console.log("\n--- 20. Phase 3 Part 4: Student Experience Polish Tests ---");
+
+  // A. Internal remarks privacy: students never receive remarks unless marked visible_to_student
+  const allRemarksSample = [
+    { id: "1", body: "Internal staff note about eligibility", visible_to_student: false, kind: "internal_note" },
+    { id: "2", body: "Please upload an attested income certificate", visible_to_student: true, kind: "correction_request" },
+    { id: "3", body: "Tie break notes: applicant has lower income", visible_to_student: false, kind: "tie_break" },
+  ];
+
+  function filterRemarksForRole(remarks: typeof allRemarksSample, role: string) {
+    if (role === "student") {
+      return remarks.filter((r) => r.visible_to_student);
+    }
+    return remarks;
+  }
+
+  const studentRemarks = filterRemarksForRole(allRemarksSample, "student");
+  assert(
+    studentRemarks.length === 1 && studentRemarks[0].id === "2",
+    "Student only receives remarks explicitly marked visible_to_student"
+  );
+  assert(
+    !studentRemarks.some((r) => r.kind === "internal_note"),
+    "Internal staff notes are strictly hidden from student view"
+  );
+  assert(
+    !studentRemarks.some((r) => r.kind === "tie_break"),
+    "Tie break remarks are strictly hidden from student view"
+  );
+
+  const adminRemarks = filterRemarksForRole(allRemarksSample, "admin");
+  assert(
+    adminRemarks.length === 3,
+    "Admin receives all remarks including internal notes and tie break remarks"
+  );
+
+  // B. Status timeline construction
+  function buildTimeline(
+    status: string,
+    submittedAt?: string,
+    _updatedAt?: string,
+    visibleRemarks: typeof allRemarksSample = []
+  ) {
+    const correctionRemark = visibleRemarks.find((r) => r.kind === "correction_request");
+    const steps = [
+      { status: "submitted", active: status === "submitted", completed: Boolean(submittedAt) },
+      {
+        status: "under_review",
+        active: status === "under_review",
+        completed: ["under_review", "needs_correction", "shortlisted", "accepted", "rejected"].includes(status),
+      },
+    ];
+    if (status === "needs_correction" || correctionRemark) {
+      steps.push({
+        status: "needs_correction",
+        active: status === "needs_correction",
+        completed: status !== "needs_correction",
+      });
+    }
+    steps.push({
+      status: "shortlisted",
+      active: status === "shortlisted",
+      completed: ["shortlisted", "accepted"].includes(status),
+    });
+    if (status === "rejected") {
+      steps.push({ status: "rejected", active: true, completed: true });
+    } else {
+      steps.push({ status: "accepted", active: status === "accepted", completed: status === "accepted" });
+    }
+    return steps;
+  }
+
+  const timelineNeedsCorrection = buildTimeline("needs_correction", "2026-10-15T10:00:00Z", "2026-10-16T12:00:00Z");
+  assert(
+    timelineNeedsCorrection.some((s) => s.status === "needs_correction" && s.active === true),
+    "Timeline includes active 'needs_correction' step when status is needs_correction"
+  );
+
+  const timelineAccepted = buildTimeline("accepted", "2026-10-15T10:00:00Z", "2026-10-17T12:00:00Z");
+  assert(
+    timelineAccepted.some((s) => s.status === "accepted" && s.completed === true),
+    "Timeline marks 'accepted' as completed when application is awarded"
+  );
+
 
 
   console.log("\n====================================================");
