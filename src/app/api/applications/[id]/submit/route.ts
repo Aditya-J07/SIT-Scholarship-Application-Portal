@@ -10,7 +10,7 @@ import { sendNotification } from '@/lib/notifications';
 import { storage } from '@/lib/storage';
 import { ApplicationFormData, ApplicationFileRecord } from '@/lib/types';
 import { getClientIp } from '@/lib/rate-limit';
-import { decryptBankAccount, encryptBankAccount } from '@/lib/crypto/field-encryption';
+import { decryptBankAccount, encryptBankAccount, hashBankAccount } from '@/lib/crypto/field-encryption';
 
 export async function POST(
   request: Request,

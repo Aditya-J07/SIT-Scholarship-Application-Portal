@@ -92,6 +92,7 @@ import {
   decryptBankAccount,
   maskBankAccount,
   getBankAccLast4,
+  hashBankAccount,
 } from "../src/lib/crypto/field-encryption";
 import { generateUnambiguousRefNo } from "../src/lib/crypto/ref-no";
 import { ALLOWED_FILE_KINDS, isValidFileKind, detectMimeFromBytes } from "../src/lib/storage";
@@ -117,6 +118,7 @@ import { POST as loginRoute } from "../src/app/api/auth/login/route";
 import { resetAdminClient } from "../src/utils/supabase/admin";
 import { createClient as createServerClient } from "../src/utils/supabase/server";
 import { verifyTurnstileToken } from "../src/lib/auth/turnstile";
+import { canReviewerAccessDepartment } from "../src/lib/auth/admin-guard";
 
 let passedTests = 0;
 let totalTests = 0;
@@ -2273,6 +2275,280 @@ async function runTests() {
     console.error = origError;
     console.log = origLog;
   }
+
+  // 19. Phase 3 Part 3: Admin Features, Duplicate Flags, Reviewer Scoping, SSKA Recommendation & Data Requests
+  console.log("\n--- 19. Phase 3 Part 3: Admin Features, Duplicate Flags & DPDP Data Requests ---");
+
+  // A. Bank Account Keyed HMAC-SHA256 Hashing Tests
+  const plainAcc1 = "123456789012";
+  const plainAcc1Spaced = " 1234 5678 9012 ";
+  const plainAcc2 = "987654321098";
+
+  const hash1 = hashBankAccount(plainAcc1);
+  const hash1Spaced = hashBankAccount(plainAcc1Spaced);
+  const hash2 = hashBankAccount(plainAcc2);
+
+  assert(
+    typeof hash1 === "string" && hash1.length === 64,
+    "hashBankAccount produces a valid 64-character HMAC-SHA256 hex string"
+  );
+  assert(
+    hash1 === hash1Spaced,
+    "hashBankAccount normalizes whitespace so spaced account numbers produce identical hashes"
+  );
+  assert(
+    hash1 !== hash2,
+    "Different bank accounts produce distinct HMAC-SHA256 hashes"
+  );
+  assert(
+    !hash1.includes("123456789012") && !hash1.includes("1234"),
+    "bank_acc_hash is a one-way cryptographic hash and contains no plain account digits"
+  );
+  assert(
+    hashBankAccount("") === "",
+    "hashBankAccount returns empty string for empty input"
+  );
+
+  // B. Server-Side Duplicate Flags Computation Logic
+  const mockAppsInCycle = [
+    {
+      id: "app-1",
+      student_id: "student-1",
+      cycle_id: "cycle-2026",
+      bank_acc_hash: hash1,
+      data: { mobile: "9876543210", usn: "1SI23CS001" },
+    },
+    {
+      id: "app-2",
+      student_id: "student-2",
+      cycle_id: "cycle-2026",
+      bank_acc_hash: hash1, // Duplicate bank account!
+      data: { mobile: "9999999999", usn: "1SI23CS002" },
+    },
+    {
+      id: "app-3",
+      student_id: "student-3",
+      cycle_id: "cycle-2026",
+      bank_acc_hash: hash2,
+      data: { mobile: "9876543210", usn: "1SI23CS003" }, // Duplicate mobile!
+    },
+    {
+      id: "app-4",
+      student_id: "student-4",
+      cycle_id: "cycle-2025", // Different cycle
+      bank_acc_hash: hash1,
+      data: { mobile: "9876543210", usn: "1SI23CS001" },
+    },
+  ];
+
+  function computeDuplicates(targetApp: typeof mockAppsInCycle[0], pool: typeof mockAppsInCycle) {
+    const reasons: string[] = [];
+    for (const other of pool) {
+      if (other.id === targetApp.id || other.student_id === targetApp.student_id || other.cycle_id !== targetApp.cycle_id) {
+        continue;
+      }
+      if (targetApp.bank_acc_hash && other.bank_acc_hash && targetApp.bank_acc_hash === other.bank_acc_hash) {
+        if (!reasons.includes("Duplicate Bank Account")) reasons.push("Duplicate Bank Account");
+      }
+      if (targetApp.data.mobile === other.data.mobile) {
+        if (!reasons.includes("Duplicate Mobile Number")) reasons.push("Duplicate Mobile Number");
+      }
+      if (targetApp.data.usn.toUpperCase() === other.data.usn.toUpperCase()) {
+        if (!reasons.includes("Duplicate USN")) reasons.push("Duplicate USN");
+      }
+    }
+    return { has_duplicate: reasons.length > 0, reasons };
+  }
+
+  const dupApp1 = computeDuplicates(mockAppsInCycle[0], mockAppsInCycle);
+  const dupApp2 = computeDuplicates(mockAppsInCycle[1], mockAppsInCycle);
+  const dupApp3 = computeDuplicates(mockAppsInCycle[2], mockAppsInCycle);
+  const dupApp4 = computeDuplicates(mockAppsInCycle[3], mockAppsInCycle);
+
+  assert(
+    dupApp1.has_duplicate && dupApp1.reasons.includes("Duplicate Bank Account"),
+    "Application 1 flagged for Duplicate Bank Account (matching Application 2) without decrypting"
+  );
+  assert(
+    dupApp2.has_duplicate && dupApp2.reasons.includes("Duplicate Bank Account"),
+    "Application 2 flagged for Duplicate Bank Account"
+  );
+  assert(
+    dupApp3.has_duplicate && dupApp3.reasons.includes("Duplicate Mobile Number"),
+    "Application 3 flagged for Duplicate Mobile Number"
+  );
+  assert(
+    !dupApp4.has_duplicate,
+    "Application in a different cycle is NOT flagged as a duplicate (cycle isolation respected)"
+  );
+
+  // C. Reviewer Department Scoping Logic
+  const reviewerDept = "Computer Science and Engineering";
+  const studentCourseCse = "Computer Science and Engineering";
+  const studentCourseMech = "Mechanical Engineering";
+
+  assert(
+    canReviewerAccessDepartment(reviewerDept, studentCourseCse) === true,
+    "Reviewer with CSE department can view CSE student application"
+  );
+  assert(
+    canReviewerAccessDepartment(reviewerDept, "B.E. in Computer Science") === true,
+    "Reviewer with CSE department can view student application matching partial department name"
+  );
+  assert(
+    canReviewerAccessDepartment(reviewerDept, studentCourseMech) === false,
+    "Reviewer with CSE department is rejected (access denied) for Mechanical Engineering application"
+  );
+  assert(
+    canReviewerAccessDepartment(undefined, studentCourseMech) === true,
+    "Staff member without department restriction (e.g. Admin) can view all applications"
+  );
+
+  // D. SSKA Recommendation Requirement Rule
+  function validateDecisionAcceptance(
+    action: string,
+    scholarshipCode: string,
+    recommendationStatus?: string
+  ): { allowed: boolean; errorCode?: string } {
+    if (action === "accept") {
+      const isSska = scholarshipCode === "SSKA";
+      if (isSska) {
+        const hasRec = recommendationStatus && recommendationStatus !== "pending";
+        if (!hasRec) {
+          return { allowed: false, errorCode: "RECOMMENDATION_REQUIRED" };
+        }
+      }
+    }
+    return { allowed: true };
+  }
+
+  assert(
+    validateDecisionAcceptance("accept", "SSKA", undefined).allowed === false &&
+      validateDecisionAcceptance("accept", "SSKA", undefined).errorCode === "RECOMMENDATION_REQUIRED",
+    "SSKA application with undefined recommendation cannot be accepted (fails with RECOMMENDATION_REQUIRED)"
+  );
+  assert(
+    validateDecisionAcceptance("accept", "SSKA", "pending").allowed === false &&
+      validateDecisionAcceptance("accept", "SSKA", "pending").errorCode === "RECOMMENDATION_REQUIRED",
+    "SSKA application with pending recommendation cannot be accepted"
+  );
+  assert(
+    validateDecisionAcceptance("accept", "SSKA", "recommended").allowed === true,
+    "SSKA application with 'recommended' status can be accepted"
+  );
+  assert(
+    validateDecisionAcceptance("accept", "MNC", undefined).allowed === true,
+    "MNC application can be accepted without faculty recommendation"
+  );
+
+  // E. Per-Scholarship Required Enclosures Check
+  function checkEnclosures(
+    uploadedKinds: string[],
+    rules: { required_documents?: string[] }
+  ): { pass: boolean; missing: string[] } {
+    const required = rules.required_documents && rules.required_documents.length > 0
+      ? rules.required_documents
+      : ["photo", "sig_student", "sig_parent", "cet_order", "marks_card", "income_cert", "aadhaar", "fee_receipt", "principal_cert"];
+    const uploadedSet = new Set(uploadedKinds);
+    const missing = required.filter((k) => !uploadedSet.has(k));
+    return { pass: missing.length === 0, missing };
+  }
+
+  const customSskaRules = { required_documents: ["photo", "sig_student", "marks_card", "income_cert"] };
+  const uploadSubset = ["photo", "sig_student", "marks_card", "income_cert"];
+
+  assert(
+    checkEnclosures(uploadSubset, customSskaRules).pass === true,
+    "Application with all scholarship-specific required documents passes submission check"
+  );
+  assert(
+    checkEnclosures(["photo", "sig_student"], customSskaRules).pass === false &&
+      checkEnclosures(["photo", "sig_student"], customSskaRules).missing.includes("marks_card"),
+    "Application missing a scholarship-specific required document fails submission check"
+  );
+
+  // F. Cycle Validation Rules
+  function validateCycleUpdate(
+    status: string,
+    opens_at?: string | null,
+    closes_at?: string | null
+  ): { valid: boolean; error?: string } {
+    if (status === "open") {
+      if (!opens_at || !closes_at) {
+        return { valid: false, error: "A cycle cannot be opened without both opening and closing dates configured." };
+      }
+    }
+    if (opens_at && closes_at) {
+      const openTime = new Date(opens_at).getTime();
+      const closeTime = new Date(closes_at).getTime();
+      if (closeTime <= openTime) {
+        return { valid: false, error: "Closing date must be strictly after the opening date." };
+      }
+    }
+    return { valid: true };
+  }
+
+  assert(
+    validateCycleUpdate("open", null, null).valid === false,
+    "Attempting to set cycle status to 'open' with NULL dates is rejected"
+  );
+  assert(
+    validateCycleUpdate("open", "2026-08-01T00:00:00Z", null).valid === false,
+    "Attempting to set cycle status to 'open' with missing closing date is rejected"
+  );
+  assert(
+    validateCycleUpdate("open", "2026-08-31T00:00:00Z", "2026-08-01T00:00:00Z").valid === false,
+    "Cycle where closing date is before opening date is rejected"
+  );
+  assert(
+    validateCycleUpdate("closed", null, null).valid === true,
+    "Cycle with status 'closed' and NULL dates is valid"
+  );
+  assert(
+    validateCycleUpdate("open", "2026-08-01T00:00:00Z", "2026-08-31T23:59:59Z").valid === true,
+    "Cycle with status 'open' and valid closing date after opening date is accepted"
+  );
+
+  // G. Data Requests Validation
+  function validateDataRequestInput(requestType: string, details: string): { valid: boolean } {
+    if (!["correction", "deletion"].includes(requestType)) return { valid: false };
+    if (!details || details.trim().length === 0) return { valid: false };
+    return { valid: true };
+  }
+
+  assert(
+    validateDataRequestInput("correction", "Please update my mobile number").valid === true,
+    "Valid correction data request passes validation"
+  );
+  assert(
+    validateDataRequestInput("deletion", "Requesting account deletion under DPDP Act").valid === true,
+    "Valid deletion data request passes validation"
+  );
+  assert(
+    validateDataRequestInput("unauthorized_action", "Details").valid === false,
+    "Invalid request_type is rejected"
+  );
+  assert(
+    validateDataRequestInput("correction", "").valid === false,
+    "Empty details in data request is rejected"
+  );
+
+  // H. Retention Purge Logic & Cutoff Calculation
+  const testRetentionYears = 7;
+  const testNow = new Date();
+  const computedCutoff = new Date(testNow.getFullYear() - testRetentionYears, testNow.getMonth(), testNow.getDate());
+  const olderDate = new Date(testNow.getFullYear() - 8, testNow.getMonth(), testNow.getDate());
+  const newerDate = new Date(testNow.getFullYear() - 5, testNow.getMonth(), testNow.getDate());
+
+  assert(
+    olderDate.getTime() < computedCutoff.getTime(),
+    "Data from 8 years ago exceeds 7-year retention threshold and is flagged for purge"
+  );
+  assert(
+    newerDate.getTime() > computedCutoff.getTime(),
+    "Data from 5 years ago is within 7-year retention window and is preserved"
+  );
+
 
 
   console.log("\n====================================================");

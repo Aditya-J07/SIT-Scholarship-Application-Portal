@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireAdminOrReviewer } from '@/lib/auth/admin-guard';
+import { requireAdminOrReviewer, canReviewerAccessDepartment } from '@/lib/auth/admin-guard';
 import { db } from '@/lib/db';
 import { sendNotification } from '@/lib/notifications';
 import { NotificationType } from '@/lib/notifications';
@@ -55,6 +55,17 @@ export async function POST(
       { error: { message: 'Draft applications cannot be decided. Application must be submitted by the student first.' } },
       { status: 409 }
     );
+  }
+
+  // Reviewer department scoping
+  if (session.role === 'reviewer') {
+    const reviewer = await db.findUserById(session.userId);
+    if (!canReviewerAccessDepartment(reviewer?.department, application.data?.course)) {
+      return NextResponse.json(
+        { error: { message: 'Forbidden: application outside reviewer department' } },
+        { status: 403 }
+      );
+    }
   }
 
   try {
@@ -125,6 +136,24 @@ export async function POST(
     if (action === 'accept') {
       targetStatus = 'accepted';
       notifType = 'APPLICATION_ACCEPTED';
+
+      // Item 6: SSKA (recommendation required): cannot move to accepted unless recommendation exists
+      const scholarship = await db.findScholarshipByCode(application.data.scholarship_code || 'MNC');
+      const requiresRec = Boolean(scholarship?.requires_recommendation || application.data.scholarship_code === 'SSKA');
+      if (requiresRec) {
+        const hasValidRec = application.recommendation_status && application.recommendation_status !== 'pending';
+        if (!hasValidRec) {
+          return NextResponse.json(
+            {
+              error: {
+                code: 'RECOMMENDATION_REQUIRED',
+                message: 'Cannot accept SSKA application: a recommendation from Proctor or Head of Department is required before acceptance.',
+              },
+            },
+            { status: 400 }
+          );
+        }
+      }
     } else if (action === 'reject') {
       targetStatus = 'rejected';
       notifType = 'APPLICATION_REJECTED';

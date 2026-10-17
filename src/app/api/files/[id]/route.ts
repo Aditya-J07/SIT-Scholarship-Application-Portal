@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAuthorizedSession } from '@/lib/auth/session';
+import { canReviewerAccessDepartment } from '@/lib/auth/admin-guard';
 import { db } from '@/lib/db';
 import { storage } from '@/lib/storage';
 import { getClientIp } from '@/lib/rate-limit';
@@ -27,6 +28,17 @@ export async function GET(
   // Row Level Security check: Students can only view their own files; staff can view all per role
   if (session.role === 'student' && application.student_id !== session.userId) {
     return NextResponse.json({ error: { message: 'Access denied to this file' } }, { status: 403 });
+  }
+
+  // Reviewer department scoping: reviewer can only view files of applications matching their department
+  if (session.role === 'reviewer') {
+    const reviewer = await db.findUserById(session.userId);
+    if (!canReviewerAccessDepartment(reviewer?.department, application.data?.course)) {
+      return NextResponse.json(
+        { error: { message: 'Forbidden: application outside reviewer department' } },
+        { status: 403 }
+      );
+    }
   }
 
   const fileBuffer = await storage.getFileBuffer(fileRecord.storage_path);

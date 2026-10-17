@@ -28,12 +28,14 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     last_seen_at TIMESTAMPTZ,          -- Staff session activity tracker for 30-min idle timeout
     consent_accepted_at TIMESTAMPTZ,   -- DPDP Act 2023 Consent timestamp
     consent_version TEXT,              -- Privacy policy version consented to
+    department TEXT,                   -- Department/Branch for Reviewer scoping
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_profiles_email ON public.profiles(lower(email));
 CREATE INDEX IF NOT EXISTS idx_profiles_role ON public.profiles(role);
+CREATE INDEX IF NOT EXISTS idx_profiles_department ON public.profiles(department);
 
 -- ------------------------------------------------------------------------------
 -- 2. SCHOLARSHIPS TABLE
@@ -88,6 +90,8 @@ CREATE TABLE IF NOT EXISTS public.applications (
     pdf_path TEXT,
     pdf_sha256 TEXT,
     hard_copy_received BOOLEAN NOT NULL DEFAULT FALSE,
+    hard_copy_received_at TIMESTAMPTZ,
+    bank_acc_hash TEXT,
     recommendation_status TEXT CHECK (recommendation_status IN ('pending', 'recommended', 'not_recommended')),
     recommendation_note TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -100,6 +104,8 @@ CREATE INDEX IF NOT EXISTS idx_applications_cycle_merit ON public.applications(c
 CREATE INDEX IF NOT EXISTS idx_applications_student_id ON public.applications(student_id);
 CREATE INDEX IF NOT EXISTS idx_applications_ref_no ON public.applications(ref_no);
 CREATE INDEX IF NOT EXISTS idx_applications_updated_at ON public.applications(updated_at);
+CREATE INDEX IF NOT EXISTS idx_applications_bank_acc_hash ON public.applications(bank_acc_hash);
+CREATE INDEX IF NOT EXISTS idx_applications_hard_copy ON public.applications(hard_copy_received);
 
 -- Hardened submission deadline trigger
 CREATE OR REPLACE FUNCTION public.check_application_submission_deadline()
@@ -377,7 +383,11 @@ VALUES
         "max_assistance_pct": 30,
         "max_scholarship_pct": 50,
         "allow_backlog": false,
-        "max_awardees_per_year": 1
+        "max_awardees_per_year": 1,
+        "required_documents": [
+            "photo", "sig_student", "sig_parent", "cet_order",
+            "marks_card", "income_cert", "aadhaar", "fee_receipt", "principal_cert"
+        ]
     }'::jsonb,
     false,
     'Endowment fund loan scholarship awarded on merit-cum-means for financially deserving students admitted through CET. Family annual income must not exceed Rs. 3,00,000.'
@@ -390,8 +400,12 @@ VALUES
     'Tuition fee per year',
     '{
         "income_limit": 500000,
-        "requires_hod_proctor_recommendation": true
-    }'::jsonb,
+        "requires_hod_proctor_recommendation": true,
+        "required_documents": [
+            "photo", "sig_student", "sig_parent", "cet_order",
+            "marks_card", "income_cert", "aadhaar", "fee_receipt", "principal_cert"
+        ]
+    }'::jsonb, -- TODO [COLLEGE DECISION REQUIRED]: confirm the enclosures list for SSKA
     true,
     'Merit scholarship with recommendation from Proctor and Head of Department. Awarded to meritorious students facing financial distress.'
 ),
@@ -431,4 +445,31 @@ VALUES
     'closed'
 )
 ON CONFLICT (id) DO NOTHING;
+
+-- ------------------------------------------------------------------------------
+-- 12. DATA REQUESTS TABLE (DPDP Act 2023 - Data Correction & Deletion)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.data_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    student_id UUID NOT NULL,
+    student_email TEXT NOT NULL,
+    request_type TEXT NOT NULL CHECK (request_type IN ('correction', 'deletion')),
+    details TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'in_progress', 'resolved', 'rejected')) DEFAULT 'pending',
+    admin_notes TEXT,
+    resolved_by UUID,
+    resolved_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_data_requests_student_id ON public.data_requests(student_id);
+CREATE INDEX IF NOT EXISTS idx_data_requests_status ON public.data_requests(status);
+CREATE INDEX IF NOT EXISTS idx_data_requests_created_at ON public.data_requests(created_at DESC);
+
+-- Enable RLS and lock down direct public table access
+ALTER TABLE public.data_requests ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.data_requests FROM anon, authenticated;
+GRANT ALL ON TABLE public.data_requests TO service_role;
+
 

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAuthorizedSession } from '@/lib/auth/session';
+import { canReviewerAccessDepartment } from '@/lib/auth/admin-guard';
 import { db } from '@/lib/db';
 import { generateApplicationPdf } from '@/lib/pdf/generatePdf';
 import { storage } from '@/lib/storage';
@@ -29,6 +30,17 @@ export async function GET(
   // Row Level Security check
   if (session.role === 'student' && application.student_id !== session.userId) {
     return NextResponse.json({ error: { message: 'Forbidden' } }, { status: 403 });
+  }
+
+  // Reviewer department scoping: reviewer can only view PDFs of applications matching their department
+  if (session.role === 'reviewer') {
+    const reviewer = await db.findUserById(session.userId);
+    if (!canReviewerAccessDepartment(reviewer?.department, application.data?.course)) {
+      return NextResponse.json(
+        { error: { message: 'Forbidden: application outside reviewer department' } },
+        { status: 403 }
+      );
+    }
   }
 
   const { searchParams } = new URL(request.url);

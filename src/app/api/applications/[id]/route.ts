@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getAuthorizedSession } from '@/lib/auth/session';
+import { canReviewerAccessDepartment } from '@/lib/auth/admin-guard';
 import { db } from '@/lib/db';
 import { calculateMeritScore, calculatePercentage } from '@/lib/merit';
 import { evaluateEligibility } from '@/lib/eligibility';
 import { step1Schema, step2Schema, step3Schema, step4Schema, step5Schema } from '@/lib/schemas/application';
-import { decryptBankAccount, encryptBankAccount, maskBankAccount } from '@/lib/crypto/encryption';
+import { decryptBankAccount, encryptBankAccount, maskBankAccount, hashBankAccount } from '@/lib/crypto/field-encryption';
 import { verifyStateChangingOrigin } from '@/lib/auth/origin-guard';
 import { getClientIp } from '@/lib/rate-limit';
 
@@ -26,6 +27,17 @@ export async function GET(
   // Row Level Security: student can only access their own
   if (session.role === 'student' && application.student_id !== session.userId) {
     return NextResponse.json({ error: { message: 'Forbidden' } }, { status: 403 });
+  }
+
+  // Reviewer department scoping: reviewer can only view applications matching their department
+  if (session.role === 'reviewer') {
+    const reviewer = await db.findUserById(session.userId);
+    if (!canReviewerAccessDepartment(reviewer?.department, application.data?.course)) {
+      return NextResponse.json(
+        { error: { message: 'Forbidden: application outside reviewer department' } },
+        { status: 403 }
+      );
+    }
   }
 
   const scholarship = await db.findScholarshipByCode(application.data.scholarship_code || 'MNC');
@@ -240,6 +252,7 @@ export async function PATCH(
       }
       const rawBank = res.data.bank_acc_no;
       const encBank = encryptBankAccount(rawBank);
+      const bankHash = hashBankAccount(rawBank);
       const bankLast4 = rawBank.slice(-4);
       validatedCleanData = {
         ...res.data,
@@ -285,12 +298,16 @@ export async function PATCH(
       scholarship?.code || 'MNC'
     );
 
+    const step5RawBank = step === 5 ? (stepData as Record<string, unknown>).bank_acc_no : undefined;
+    const computedBankHash = typeof step5RawBank === 'string' && step5RawBank ? hashBankAccount(step5RawBank) : undefined;
+
     const updated = await db.updateApplication(
       id,
       {
         data: mergedData,
         current_step: step,
         merit_score,
+        ...(computedBankHash ? { bank_acc_hash: computedBankHash } : {}),
         computed: {
           percentage: mergedData.percentage || 0,
           merit_score,

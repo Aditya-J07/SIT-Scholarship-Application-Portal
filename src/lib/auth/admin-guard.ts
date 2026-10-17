@@ -58,3 +58,24 @@ export async function requireAdminOrReviewer(): Promise<
 > {
   return requireAdminSession({ allowReviewer: true, requireAal2: true });
 }
+
+/**
+ * Evaluates whether a reviewer with an assigned department has permission to access
+ * an application based on the student's enrolled course / branch.
+ * If reviewerDept is unset, unrestricted access is granted (e.g. for general staff / admins).
+ */
+export function canReviewerAccessDepartment(reviewerDept?: string, studentCourse?: string): boolean {
+  if (!reviewerDept || !reviewerDept.trim()) return true;
+  const sCourse = (studentCourse || '').trim().toLowerCase();
+  const rDept = reviewerDept.trim().toLowerCase();
+  if (!sCourse) return false;
+  if (sCourse.includes(rDept) || rDept.includes(sCourse)) return true;
+
+  // Filter significant keywords (length >= 3, excluding generic academic terms)
+  const stopWords = new Set(['and', '&', 'of', 'in', 'the', 'engineering', 'department', 'dept', 'b.e.', 'be', 'btech', 'mtech']);
+  const deptKeywords = rDept.split(/[\s,./\-_]+/).filter((w) => w.length >= 3 && !stopWords.has(w));
+  if (deptKeywords.length > 0 && deptKeywords.every((kw) => sCourse.includes(kw))) {
+    return true;
+  }
+  return false;
+}

@@ -8,6 +8,7 @@ import {
   ApplicationFileRecord,
   RemarkRecord,
   AuditRecord,
+  DataRequestRecord,
 } from "../types";
 import {
   encryptBankAccount,
@@ -50,6 +51,7 @@ function mapProfileFromDb(row: Record<string, unknown>): UserProfile {
     last_seen_at: row.last_seen_at ? String(row.last_seen_at) : undefined,
     consent_accepted_at: row.consent_accepted_at ? String(row.consent_accepted_at) : undefined,
     consent_version: row.consent_version ? String(row.consent_version) : undefined,
+    department: row.department ? String(row.department) : undefined,
     created_at: String(row.created_at || new Date().toISOString()),
     updated_at: String(row.updated_at || new Date().toISOString()),
   };
@@ -722,6 +724,107 @@ export const db = {
     }
 
     return (data as AuditRecord) || fullRecord;
+  },
+
+  // --------------------------------------------------------------------------
+  // Data Requests (DPDP Act 2023)
+  // --------------------------------------------------------------------------
+  listDataRequests: async (statusFilter?: string): Promise<DataRequestRecord[]> => {
+    const supabase = getAdminClient();
+    let query = supabase
+      .from("data_requests")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (statusFilter) {
+      query = query.eq("status", statusFilter);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error("[DB] listDataRequests error:", error.message);
+      return [];
+    }
+    return (data || []) as DataRequestRecord[];
+  },
+
+  findDataRequestsForStudent: async (studentId: string): Promise<DataRequestRecord[]> => {
+    const supabase = getAdminClient();
+    const { data, error } = await supabase
+      .from("data_requests")
+      .select("*")
+      .eq("student_id", studentId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[DB] findDataRequestsForStudent error:", error.message);
+      return [];
+    }
+    return (data || []) as DataRequestRecord[];
+  },
+
+  findDataRequestById: async (id: string): Promise<DataRequestRecord | null> => {
+    const supabase = getAdminClient();
+    const { data, error } = await supabase
+      .from("data_requests")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[DB] findDataRequestById error:", error.message);
+      return null;
+    }
+    return (data as DataRequestRecord) || null;
+  },
+
+  createDataRequest: async (
+    req: Omit<DataRequestRecord, "id" | "created_at" | "updated_at">
+  ): Promise<DataRequestRecord> => {
+    const supabase = getAdminClient();
+    const now = new Date().toISOString();
+    const newRecord: DataRequestRecord = {
+      ...req,
+      id: crypto.randomUUID(),
+      created_at: now,
+      updated_at: now,
+    };
+
+    const { data, error } = await supabase
+      .from("data_requests")
+      .insert(newRecord)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("[DB] createDataRequest error:", error.message);
+      throw new Error(`Failed to create data request: ${error.message}`);
+    }
+    return (data as DataRequestRecord) || newRecord;
+  },
+
+  updateDataRequest: async (
+    id: string,
+    updates: Partial<DataRequestRecord>
+  ): Promise<DataRequestRecord | null> => {
+    const supabase = getAdminClient();
+    const payload = {
+      ...updates,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from("data_requests")
+      .update(payload)
+      .eq("id", id)
+      .select("*")
+      .maybeSingle();
+
+    if (error) {
+      console.error("[DB] updateDataRequest error:", error.message);
+      return null;
+    }
+    return (data as DataRequestRecord) || null;
   },
 };
 

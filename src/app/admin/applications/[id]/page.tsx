@@ -31,7 +31,7 @@ export default function AdminApplicationDetailPage({
     fetch('/api/auth/session')
       .then((res) => res.json())
       .then((sess) => {
-        if (!sess.authenticated || sess.user.role !== 'admin') {
+        if (!sess.authenticated || (sess.user.role !== 'admin' && sess.user.role !== 'reviewer')) {
           router.push('/login');
           return;
         }
@@ -101,18 +101,39 @@ export default function AdminApplicationDetailPage({
 
   const handleToggleHardCopy = async (received: boolean) => {
     try {
+      const res = await fetch(`/api/admin/applications/${id}/hard-copy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hard_copy_received: received }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setApplication(data.application);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleRecommendation = async (recStatus: 'recommended' | 'not_recommended') => {
+    const note = prompt(`Enter ${recStatus.toUpperCase()} recommendation remark for candidate:`) || '';
+    try {
       const res = await fetch(`/api/admin/applications/${id}/decision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'under_review',
-          hard_copy_received: received,
-          remark: received ? 'Physical signed hard copy received in Accounts Section' : undefined,
+          action: 'recommendation',
+          recommendation_status: recStatus,
+          recommendation_note: note,
         }),
       });
       if (res.ok) {
         const data = await res.json();
         setApplication(data.application);
+        fetch(`/api/applications/${id}`).then((r) => r.json()).then((d) => setRemarks(d.remarks || []));
+      } else {
+        const err = await res.json();
+        alert(`Error: ${err.error?.message || 'Failed'}`);
       }
     } catch (err) {
       console.error(err);
@@ -388,8 +409,30 @@ export default function AdminApplicationDetailPage({
                   </div>
                 </>
               ) : (
-                <div className="text-gray-600 text-xs">
-                  Reviewer accounts may record recommendations and remarks. Final Accept/Reject is executed by Committee Admin.
+                <div className="space-y-3 pt-2 text-xs">
+                  <div className="font-bold text-gray-700">Department / Proctor Recommendation:</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleRecommendation('recommended')}
+                      className="gov-btn bg-emerald-700 text-white hover:bg-emerald-800 text-xs py-2 font-bold"
+                    >
+                      ✓ Recommend
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRecommendation('not_recommended')}
+                      className="gov-btn bg-red-700 text-white hover:bg-red-800 text-xs py-2 font-bold"
+                    >
+                      ✗ Do Not Recommend
+                    </button>
+                  </div>
+                  <div className="text-[11px] text-gray-600 bg-gray-50 p-2 border border-gray-200">
+                    Current Recommendation: <strong className="uppercase text-[#AC3D47]">{application.recommendation_status || 'Pending'}</strong>
+                    {application.recommendation_note && (
+                      <div className="mt-1 text-gray-500">Note: {application.recommendation_note}</div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

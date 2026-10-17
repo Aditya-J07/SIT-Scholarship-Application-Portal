@@ -146,6 +146,27 @@ export default function ApplicationDetailPage({
               </div>
             </div>
           </div>
+
+          {/* Department Recommendation Status (Item 6) */}
+          <div className="mt-3 p-2.5 bg-gray-50 border border-gray-300 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+            <div>
+              <span className="font-bold text-gray-700">Department / Proctor Recommendation: </span>
+              <span className={`font-bold uppercase font-mono ${
+                application.recommendation_status === 'recommended'
+                  ? 'text-emerald-700'
+                  : application.recommendation_status === 'not_recommended'
+                  ? 'text-red-700'
+                  : 'text-amber-700'
+              }`}>
+                {application.recommendation_status || 'Pending Review'}
+              </span>
+            </div>
+            {scholarship?.requires_recommendation && (
+              <span className="text-[10px] text-gray-500 italic">
+                Mandatory for {scholarship.code} scholarship final award
+              </span>
+            )}
+          </div>
         </div>
       </div>
 

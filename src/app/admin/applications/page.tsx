@@ -3,10 +3,18 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { ApplicationRecord } from '@/lib/types';
+
+interface ExtendedAppRecord extends ApplicationRecord {
+  duplicate_flags?: {
+    has_duplicate: boolean;
+    reasons: string[];
+  };
+}
 
 export default function AdminApplicationsTablePage() {
   const router = useRouter();
-  const [applications, setApplications] = useState<any[]>([]);
+  const [applications, setApplications] = useState<ExtendedAppRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(25);
@@ -14,15 +22,16 @@ export default function AdminApplicationsTablePage() {
   const [scholarshipFilter, setScholarshipFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [yearFilter, setYearFilter] = useState('');
+  const [duplicateFilter, setDuplicateFilter] = useState('');
+  const [hardCopyFilter, setHardCopyFilter] = useState('');
+  const [minIncome, setMinIncome] = useState('');
+  const [maxIncome, setMaxIncome] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const [sortBy, setSortBy] = useState('merit');
   const [order, setOrder] = useState('desc');
   const [loading, setLoading] = useState(true);
   const [zipPage, setZipPage] = useState(1);
-
-  useEffect(() => {
-    fetchApplications();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, scholarshipFilter, statusFilter, yearFilter, sortBy, order]);
 
   const fetchApplications = async () => {
     setLoading(true);
@@ -38,6 +47,13 @@ export default function AdminApplicationsTablePage() {
         order,
       });
 
+      if (duplicateFilter) params.set('hasDuplicate', duplicateFilter);
+      if (hardCopyFilter) params.set('hardCopy', hardCopyFilter);
+      if (minIncome) params.set('minIncome', minIncome);
+      if (maxIncome) params.set('maxIncome', maxIncome);
+      if (fromDate) params.set('fromDate', fromDate);
+      if (toDate) params.set('toDate', toDate);
+
       const res = await fetch(`/api/admin/applications?${params.toString()}`);
       if (!res.ok) {
         router.push('/login');
@@ -52,6 +68,20 @@ export default function AdminApplicationsTablePage() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchApplications();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    page,
+    scholarshipFilter,
+    statusFilter,
+    yearFilter,
+    duplicateFilter,
+    hardCopyFilter,
+    sortBy,
+    order,
+  ]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,6 +99,8 @@ export default function AdminApplicationsTablePage() {
         return <span className="bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 font-bold uppercase text-[10px]">Correction</span>;
       case 'submitted':
         return <span className="bg-purple-100 text-purple-800 border border-purple-300 px-2 py-0.5 font-bold uppercase text-[10px]">Submitted</span>;
+      case 'under_review':
+        return <span className="bg-yellow-100 text-yellow-800 border border-yellow-300 px-2 py-0.5 font-bold uppercase text-[10px]">Under Review</span>;
       case 'rejected':
         return <span className="bg-red-100 text-red-800 border border-red-300 px-2 py-0.5 font-bold uppercase text-[10px]">Rejected</span>;
       default:
@@ -87,6 +119,9 @@ export default function AdminApplicationsTablePage() {
           <h1 className="text-xl font-bold text-[#AC3D47]">
             Scholarship Applications Repository
           </h1>
+          <div className="text-xs text-gray-600">
+            Server-side pagination, multi-criteria filtering, duplicate detection, and hard copy tracking.
+          </div>
         </div>
 
         <div className="flex flex-col sm:items-end gap-1.5">
@@ -98,48 +133,41 @@ export default function AdminApplicationsTablePage() {
               Export Filtered CSV
             </a>
             <div className="flex items-center gap-1.5">
+              <input
+                type="number"
+                min={1}
+                value={zipPage}
+                onChange={(e) => setZipPage(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                aria-label="ZIP Batch Page Number"
+                className="gov-input text-xs w-16 py-1 text-center"
+              />
               <a
                 href={`/api/admin/export?format=zip&scholarship=${scholarshipFilter}&status=${statusFilter}&page=${zipPage}`}
                 className="gov-btn gov-btn-outline text-xs"
-                title="Download applications batch (max 15 PDFs per ZIP)"
               >
-                Download PDFs (ZIP: Part {zipPage})
+                Download ZIP (Batch {zipPage})
               </a>
-              {Math.ceil(total / 15) > 1 && (
-                <select
-                  value={zipPage}
-                  onChange={(e) => setZipPage(Number(e.target.value))}
-                  className="gov-input text-xs py-1 px-1.5 h-[32px] w-auto border-gray-400"
-                  aria-label="Select ZIP batch part"
-                >
-                  {Array.from({ length: Math.ceil(total / 15) }, (_, i) => i + 1).map((p) => (
-                    <option key={p} value={p}>
-                      Part {p} ({((p - 1) * 15) + 1}–{Math.min(p * 15, total)})
-                    </option>
-                  ))}
-                </select>
-              )}
             </div>
           </div>
-          <span className="text-[10px] text-gray-500 text-right">
-            ZIP exports are limited to 15 PDFs per request to comply with Vercel&apos;s 4.5 MB response body limit.
-          </span>
         </div>
       </div>
 
       {/* Sub-Navigation Tabs */}
-      <div className="border-b border-gray-300 mb-6 flex gap-4 text-xs font-bold text-gray-700">
+      <div className="border-b border-gray-300 mb-6 flex flex-wrap gap-4 text-xs font-bold text-gray-700">
         <Link href="/admin" className="pb-2 hover:text-[#AC3D47]">
           Overview
         </Link>
         <Link href="/admin/applications" className="pb-2 border-b-2 border-[#AC3D47] text-[#AC3D47]">
-          All Applications
+          All Applications ({total})
         </Link>
         <Link href="/admin/merit" className="pb-2 hover:text-[#AC3D47]">
           Merit Evaluation Roster
         </Link>
         <Link href="/admin/scholarships" className="pb-2 hover:text-[#AC3D47]">
           Scholarships & Deadlines
+        </Link>
+        <Link href="/admin/data-requests" className="pb-2 hover:text-[#AC3D47]">
+          Data Requests
         </Link>
         <Link href="/admin/users" className="pb-2 hover:text-[#AC3D47]">
           Staff Users
@@ -193,6 +221,7 @@ export default function AdminApplicationsTablePage() {
             >
               <option value="">All Statuses</option>
               <option value="submitted">Submitted</option>
+              <option value="under_review">Under Review</option>
               <option value="shortlisted">Shortlisted</option>
               <option value="needs_correction">Needs Correction</option>
               <option value="accepted">Sanctioned</option>
@@ -217,36 +246,117 @@ export default function AdminApplicationsTablePage() {
             </select>
           </div>
 
-          {/* Sort By */}
+          {/* Duplicate Flags Filter */}
           <div>
-            <label className="block font-bold text-gray-700 mb-1">Sort Metric</label>
+            <label className="block font-bold text-gray-700 mb-1">Duplicate Flags</label>
             <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="gov-input text-xs font-semibold"
+              value={duplicateFilter}
+              onChange={(e) => { setDuplicateFilter(e.target.value); setPage(1); }}
+              className="gov-input text-xs"
             >
-              <option value="merit">Merit Score (Desc)</option>
-              <option value="income">Income (Means)</option>
-              <option value="date">Submission Date</option>
+              <option value="">All Records</option>
+              <option value="true">⚠️ Duplicates Only</option>
+              <option value="false">Unique Records</option>
             </select>
+          </div>
+
+          {/* Hard Copy Filter */}
+          <div>
+            <label className="block font-bold text-gray-700 mb-1">Hard Copy Physical</label>
+            <select
+              value={hardCopyFilter}
+              onChange={(e) => { setHardCopyFilter(e.target.value); setPage(1); }}
+              className="gov-input text-xs"
+            >
+              <option value="">All</option>
+              <option value="true">Hard Copy Received ✓</option>
+              <option value="false">Pending Hard Copy</option>
+            </select>
+          </div>
+
+          {/* Income Range */}
+          <div>
+            <label className="block font-bold text-gray-700 mb-1">Min Income (Rs.)</label>
+            <input
+              type="number"
+              placeholder="0"
+              value={minIncome}
+              onChange={(e) => { setMinIncome(e.target.value); setPage(1); }}
+              className="gov-input text-xs"
+            />
+          </div>
+          <div>
+            <label className="block font-bold text-gray-700 mb-1">Max Income (Rs.)</label>
+            <input
+              type="number"
+              placeholder="300000"
+              value={maxIncome}
+              onChange={(e) => { setMaxIncome(e.target.value); setPage(1); }}
+              className="gov-input text-xs"
+            />
+          </div>
+
+          {/* Date Range */}
+          <div>
+            <label className="block font-bold text-gray-700 mb-1">From Date</label>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => { setFromDate(e.target.value); setPage(1); }}
+              className="gov-input text-xs"
+            />
+          </div>
+          <div>
+            <label className="block font-bold text-gray-700 mb-1">To Date</label>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => { setToDate(e.target.value); setPage(1); }}
+              className="gov-input text-xs"
+            />
+          </div>
+
+          {/* Sort Field & Order */}
+          <div>
+            <label className="block font-bold text-gray-700 mb-1">Sort By</label>
+            <div className="flex gap-1">
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                className="gov-input text-xs"
+              >
+                <option value="merit">Merit Score</option>
+                <option value="income">Family Income</option>
+                <option value="date">Submission Date</option>
+                <option value="ref_no">Ref No.</option>
+              </select>
+              <button
+                type="button"
+                onClick={() => setOrder(order === 'asc' ? 'desc' : 'asc')}
+                className="gov-btn gov-btn-secondary px-2 text-xs font-mono"
+                title="Toggle Sort Order"
+              >
+                {order === 'asc' ? '↑' : '↓'}
+              </button>
+            </div>
           </div>
         </form>
       </div>
 
-      {/* Applications Data Table */}
+      {/* Applications Table */}
       <div className="border border-gray-300 bg-white">
         <div className="gov-header-bar flex items-center justify-between">
           <span className="text-xs uppercase tracking-wide">
-            Found {total} Application(s)
+            Registered Applications ({total} Found)
           </span>
           <span className="text-xs font-normal text-gray-600">
-            Page {page} of {Math.max(1, Math.ceil(total / pageSize))}
+            Page {page} of {Math.max(1, Math.ceil(total / pageSize))} (Page Size: {pageSize})
           </span>
         </div>
 
         {loading ? (
           <div className="p-12 text-center text-xs text-gray-600">
-            Fetching records...
+            Loading applications data...
           </div>
         ) : applications.length === 0 ? (
           <div className="p-12 text-center text-xs text-gray-600">
@@ -270,9 +380,9 @@ export default function AdminApplicationsTablePage() {
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {applications.map((app) => {
-                  const flags = app.computed?.eligibility_flags || {};
                   const hasBacklog = app.data.has_backlog_history;
                   const isHighIncome = (app.data.family_annual_income || 0) > 300000;
+                  const dupFlags = app.duplicate_flags;
 
                   return (
                     <tr key={app.id} className="hover:bg-gray-50">
@@ -308,8 +418,16 @@ export default function AdminApplicationsTablePage() {
                       </td>
                       <td className="p-3 border-r border-gray-200">
                         <div className="mb-1">{getStatusBadge(app.status)}</div>
-                        {/* Audit Flag Chips */}
+                        {/* Audit & Duplicate Flag Chips */}
                         <div className="flex flex-wrap gap-1">
+                          {dupFlags?.has_duplicate && (
+                            <span
+                              className="bg-amber-100 text-amber-900 border border-amber-300 text-[9px] px-1 py-0.5 font-bold cursor-help"
+                              title={`Duplicate detected: ${dupFlags.reasons.join(', ')}`}
+                            >
+                              ⚠️ Duplicate
+                            </span>
+                          )}
                           {isHighIncome && (
                             <span className="bg-red-50 text-red-700 border border-red-300 text-[9px] px-1 py-0.5">
                               Income &gt; 3L
@@ -321,7 +439,7 @@ export default function AdminApplicationsTablePage() {
                             </span>
                           )}
                           {app.hard_copy_received && (
-                            <span className="bg-emerald-50 text-emerald-700 border border-emerald-300 text-[9px] px-1 py-0.5">
+                            <span className="bg-emerald-50 text-emerald-700 border border-emerald-300 text-[9px] px-1 py-0.5 font-bold">
                               Hard Copy ✓
                             </span>
                           )}

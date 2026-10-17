@@ -509,7 +509,16 @@ export async function generateApplicationPdf(
       color: black,
     });
 
-    currY -= 50;
+    const recStatus = (application.recommendation_status || 'Pending').toUpperCase();
+    page.drawText(`Recommendation Status: ${recStatus}`, {
+      x: margin,
+      y: currY - 45,
+      size: 7,
+      font: fontBold,
+      color: recStatus === 'RECOMMENDED' ? rgb(0.1, 0.5, 0.2) : rgb(0.3, 0.3, 0.3),
+    });
+
+    currY -= 55;
   }
 
   // Enclosures List

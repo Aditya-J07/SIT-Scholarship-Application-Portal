@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireAdminOrReviewer } from '@/lib/auth/admin-guard';
+import { requireAdminOrReviewer, canReviewerAccessDepartment } from '@/lib/auth/admin-guard';
 import { db } from '@/lib/db';
 import { getClientIp } from '@/lib/rate-limit';
 import crypto from 'crypto';
@@ -17,9 +17,20 @@ export async function POST(
     return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
   }
 
+  // Reviewer department scoping
+  if (session.role === 'reviewer') {
+    const reviewer = await db.findUserById(session.userId);
+    if (!canReviewerAccessDepartment(reviewer?.department, application.data?.course)) {
+      return NextResponse.json(
+        { error: { message: 'Forbidden: application outside reviewer department' } },
+        { status: 403 }
+      );
+    }
+  }
+
   try {
     const body = await request.json();
-    const { body: remarkBody, kind = 'internal_note' } = body;
+    const { body: remarkBody, kind = 'internal_note', visible_to_student = false } = body;
 
     if (!remarkBody || remarkBody.trim().length === 0) {
       return NextResponse.json({ error: { message: 'Remark cannot be empty' } }, { status: 400 });
@@ -33,6 +44,7 @@ export async function POST(
       author_role: session.role,
       kind,
       body: remarkBody.trim(),
+      visible_to_student: Boolean(visible_to_student),
       created_at: new Date().toISOString(),
     });
 

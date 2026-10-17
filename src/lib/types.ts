@@ -35,6 +35,7 @@ export interface UserProfile {
   last_seen_at?: string;
   consent_accepted_at?: string;
   consent_version?: string;
+  department?: string;
   created_at: string;
   updated_at: string;
 }
@@ -48,6 +49,7 @@ export interface ScholarshipRules {
   max_awardees_per_year?: number; // 1 per year
   requires_hod_proctor_recommendation?: boolean; // true for SSKA
   allow_submit_with_warning?: boolean; // admin toggle
+  required_documents?: string[]; // Per-scholarship list of required document kinds
 }
 
 export interface Scholarship {
@@ -171,8 +173,9 @@ export interface RemarkRecord {
   author_id: string;
   author_name: string;
   author_role: UserRole;
-  kind: 'internal_note' | 'correction_request' | 'recommendation' | 'decision';
+  kind: 'internal_note' | 'correction_request' | 'recommendation' | 'decision' | 'tie_break';
   body: string;
+  visible_to_student?: boolean;
   created_at: string;
 }
 
@@ -205,8 +208,24 @@ export interface ApplicationRecord {
   pdf_path?: string;
   pdf_sha256?: string;
   hard_copy_received: boolean;
+  hard_copy_received_at?: string;
+  bank_acc_hash?: string;
   recommendation_status?: 'pending' | 'recommended' | 'not_recommended';
   recommendation_note?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DataRequestRecord {
+  id: string;
+  student_id: string;
+  student_email: string;
+  request_type: 'correction' | 'deletion';
+  details: string;
+  status: 'pending' | 'in_progress' | 'resolved' | 'rejected';
+  admin_notes?: string;
+  resolved_by?: string;
+  resolved_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -219,4 +238,5 @@ export interface DatabaseSchema {
   application_files: ApplicationFileRecord[];
   remarks: RemarkRecord[];
   audit_logs: AuditRecord[];
+  data_requests: DataRequestRecord[];
 }

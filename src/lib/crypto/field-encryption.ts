@@ -137,3 +137,26 @@ export function maskBankAccount(accountNumber: string): string {
   const maskedLength = Math.max(cleaned.length - 4, 4);
   return "X".repeat(maskedLength) + visible;
 }
+
+/**
+ * Computes a keyed HMAC-SHA256 hash of a bank account number using HASH_KEY.
+ * Allows comparing bank accounts across applications in the same cycle for duplicates
+ * without ever decrypting or storing plain text.
+ */
+export function hashBankAccount(accountNumber: string): string {
+  if (!accountNumber) return "";
+  const cleaned = accountNumber.trim().replace(/\s+/g, "");
+  if (!cleaned) return "";
+
+  const key = process.env.HASH_KEY;
+  if (!key) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("FATAL: Missing HASH_KEY environment variable in production.");
+    }
+    // Deterministic fallback for local dev / tests
+    return crypto.createHmac("sha256", "sit-dev-hash-key-fallback-2026").update(cleaned).digest("hex");
+  }
+
+  return crypto.createHmac("sha256", key).update(cleaned).digest("hex");
+}
+
