@@ -194,8 +194,16 @@ export const step7Fields = {
   guardian_consent_accepted: z.boolean().optional(),
 };
 
+interface Step3RefineData {
+  marks_obtained: number;
+  marks_gross_total: number;
+  year_of_study: number;
+  semester: number;
+  cgpa?: number | null;
+}
+
 // Refinement for Step 3
-function refineStep3(data: any, ctx: z.RefinementCtx) {
+function refineStep3(data: Step3RefineData, ctx: z.RefinementCtx) {
   if (data.marks_obtained > data.marks_gross_total) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -223,8 +231,15 @@ function refineStep3(data: any, ctx: z.RefinementCtx) {
   }
 }
 
+interface Step4RefineData {
+  applied_earlier: boolean;
+  previous_application_ref_no?: string;
+  getting_other_scholarship: boolean;
+  other_scholarship_amount_per_month?: number;
+}
+
 // Refinement for Step 4
-function refineStep4(data: any, ctx: z.RefinementCtx) {
+function refineStep4(data: Step4RefineData, ctx: z.RefinementCtx) {
   if (data.applied_earlier && (!data.previous_application_ref_no || data.previous_application_ref_no.trim().length === 0)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -244,8 +259,13 @@ function refineStep4(data: any, ctx: z.RefinementCtx) {
   }
 }
 
+interface Step5RefineData {
+  bank_acc_no: string;
+  confirm_bank_acc_no: string;
+}
+
 // Refinement for Step 5
-function refineStep5(data: any, ctx: z.RefinementCtx) {
+function refineStep5(data: Step5RefineData, ctx: z.RefinementCtx) {
   if (data.bank_acc_no !== data.confirm_bank_acc_no) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -255,8 +275,14 @@ function refineStep5(data: any, ctx: z.RefinementCtx) {
   }
 }
 
+interface Step7RefineData {
+  dob?: string;
+  guardian_consent_name?: string;
+  guardian_consent_accepted?: boolean;
+}
+
 // Refinement for Step 7 (Minor Parental Consent)
-function refineStep7(data: any, ctx: z.RefinementCtx) {
+function refineStep7(data: Step7RefineData, ctx: z.RefinementCtx) {
   if (REQUIRE_GUARDIAN_CONSENT_FOR_MINORS && data.dob && isApplicantMinor(data.dob)) {
     if (!data.guardian_consent_name || data.guardian_consent_name.trim().length < 3) {
       ctx.addIssue({

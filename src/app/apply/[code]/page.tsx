@@ -19,6 +19,7 @@ const SignaturePad = dynamic(() => import('@/components/SignaturePad'), {
 import { useLanguage } from '@/components/LanguageToggle';
 import { SIT_COURSES, ENCLOSURES_METADATA, REQUIRE_GUARDIAN_CONSENT_FOR_MINORS } from '@/lib/constants';
 import { isApplicantMinor } from '@/lib/schemas/application';
+import { ApplicationRecord, Scholarship, ApplicationFileRecord, ApplicationFormData } from '@/lib/types';
 
 export default function ApplyWizardPage({
   params,
@@ -30,11 +31,15 @@ export default function ApplyWizardPage({
   const { t, lang } = useLanguage();
 
   const [step, setStep] = useState(1);
-  const [application, setApplication] = useState<any>(null);
-  const [scholarship, setScholarship] = useState<any>(null);
-  const [files, setFiles] = useState<any[]>([]);
-  const [formData, _setFormData] = useState<any>({});
-  const setFormData = (valueOrFn: any) => {
+  const [application, setApplication] = useState<ApplicationRecord | null>(null);
+  const [scholarship, setScholarship] = useState<Scholarship | null>(null);
+  const [files, setFiles] = useState<ApplicationFileRecord[]>([]);
+  const [formData, _setFormData] = useState<Partial<ApplicationFormData>>({});
+  const setFormData = (
+    valueOrFn:
+      | Partial<ApplicationFormData>
+      | ((prev: Partial<ApplicationFormData>) => Partial<ApplicationFormData>)
+  ) => {
     setIsDirty(true);
     _setFormData(valueOrFn);
   };
@@ -113,7 +118,7 @@ export default function ApplyWizardPage({
         if (res.ok) {
           const resData = await res.json();
           if (resData.data) {
-            setFormData((prev: any) => ({
+            setFormData((prev: Partial<ApplicationFormData>) => ({
               ...prev,
               bank_name: resData.data.bank || prev.bank_name,
               bank_branch: resData.data.branch ? `${resData.data.branch}, ${resData.data.city}` : prev.bank_branch,
@@ -132,7 +137,7 @@ export default function ApplyWizardPage({
     if (total > 0 && obtained >= 0) {
       pct = Number(((obtained / total) * 100).toFixed(2));
     }
-    setFormData((prev: any) => ({
+    setFormData((prev: Partial<ApplicationFormData>) => ({
       ...prev,
       marks_obtained: obtained,
       marks_gross_total: total,
@@ -266,12 +271,12 @@ export default function ApplyWizardPage({
     );
   }
 
-  if (errorMessage && !application) {
+  if (!application) {
     return (
       <div className="mx-auto max-w-lg px-4 py-12">
         <div className="gov-card p-6 border-gray-300 text-center">
           <h1 className="text-base font-bold text-red-700 mb-2">Unable to Proceed</h1>
-          <p className="text-xs text-gray-600 mb-4">{errorMessage}</p>
+          <p className="text-xs text-gray-600 mb-4">{errorMessage || 'Application not found'}</p>
           <Link href="/dashboard" className="gov-btn gov-btn-primary text-xs">
             Return to Dashboard
           </Link>
@@ -534,9 +539,9 @@ export default function ApplyWizardPage({
                   className="gov-input pl-7 font-mono text-sm"
                 />
               </div>
-              {formData.family_annual_income > 0 && (
+              {(formData.family_annual_income ?? 0) > 0 && (
                 <div className="text-[11px] text-gray-600 mt-1">
-                  Indian Currency Format: <span className="font-bold text-[#AC3D47]">Rs. {formData.family_annual_income.toLocaleString('en-IN')}</span> per year
+                  Indian Currency Format: <span className="font-bold text-[#AC3D47]">Rs. {(formData.family_annual_income ?? 0).toLocaleString('en-IN')}</span> per year
                 </div>
               )}
               {fieldErrors.family_annual_income && <p className="text-red-600 text-[11px] mt-1">{fieldErrors.family_annual_income[0]}</p>}
@@ -752,7 +757,7 @@ export default function ApplyWizardPage({
             </div>
 
             {/* CGPA and Backlog (for Year 2 to 4) */}
-            {formData.year_of_study > 1 && (
+            {(formData.year_of_study ?? 0) > 1 && (
               <div className="border border-[#AC3D47]/30 bg-[#FDF5F6] p-4 space-y-3">
                 <div className="font-bold text-[#AC3D47]">
                   Performance Metrics for Senior Students (Years 2 to 4)
@@ -867,9 +872,9 @@ export default function ApplyWizardPage({
                   className="gov-input pl-7 font-mono text-sm"
                 />
               </div>
-              {formData.annual_fee > 0 && (
+              {(formData.annual_fee ?? 0) > 0 && (
                 <div className="text-[11px] text-gray-600 mt-1">
-                  Formatted: <span className="font-bold text-[#AC3D47]">Rs. {formData.annual_fee.toLocaleString('en-IN')}</span> per year
+                  Formatted: <span className="font-bold text-[#AC3D47]">Rs. {(formData.annual_fee ?? 0).toLocaleString('en-IN')}</span> per year
                 </div>
               )}
               {fieldErrors.annual_fee && <p className="text-red-600 text-[11px] mt-1">{fieldErrors.annual_fee[0]}</p>}
@@ -994,9 +999,9 @@ export default function ApplyWizardPage({
                   className="gov-input pl-7 font-mono font-bold text-sm"
                 />
               </div>
-              {formData.scholarship_amount_required_per_month > 0 && (
+              {(formData.scholarship_amount_required_per_month ?? 0) > 0 && (
                 <div className="text-[11px] text-gray-600 mt-1">
-                  Total Annual Requested: <span className="font-bold text-[#AC3D47]">Rs. {(formData.scholarship_amount_required_per_month * 12).toLocaleString('en-IN')}</span> per year
+                  Total Annual Requested: <span className="font-bold text-[#AC3D47]">Rs. {((formData.scholarship_amount_required_per_month ?? 0) * 12).toLocaleString('en-IN')}</span> per year
                 </div>
               )}
               {fieldErrors.scholarship_amount_required_per_month && <p className="text-red-600 text-[11px] mt-1">{fieldErrors.scholarship_amount_required_per_month[0]}</p>}
@@ -1251,7 +1256,7 @@ export default function ApplyWizardPage({
                 {formData.cgpa !== undefined && formData.cgpa !== null && (
                   <div><span className="text-gray-500">CGPA:</span> <span className="font-bold font-mono">{formData.cgpa} / 10.0</span></div>
                 )}
-                {formData.year_of_study > 1 && (
+                {(formData.year_of_study ?? 0) > 1 && (
                   <div><span className="text-gray-500">Backlog History:</span> <span className={formData.has_backlog_history ? 'text-red-700 font-bold' : 'text-emerald-700 font-bold'}>{formData.has_backlog_history ? 'Yes' : 'No'}</span></div>
                 )}
               </div>

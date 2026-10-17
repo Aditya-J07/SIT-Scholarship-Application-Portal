@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Scholarship, AcademicCycle } from '@/lib/types';
@@ -17,7 +17,7 @@ export default function AdminScholarshipsConfigPage() {
   const [schFeeLabel, setSchFeeLabel] = useState('');
   const [schRulesJson, setSchRulesJson] = useState('');
 
-  const loadData = () => {
+  const loadData = useCallback(() => {
     fetch('/api/admin/scholarships')
       .then((res) => {
         if (!res.ok) throw new Error('Unauthorized');
@@ -29,11 +29,11 @@ export default function AdminScholarshipsConfigPage() {
         setLoading(false);
       })
       .catch(() => router.push('/login'));
-  };
+  }, [router]);
 
   useEffect(() => {
     loadData();
-  }, [router]);
+  }, [loadData]);
 
   const handleToggleActive = async (schId: string, currentActive: boolean) => {
     try {

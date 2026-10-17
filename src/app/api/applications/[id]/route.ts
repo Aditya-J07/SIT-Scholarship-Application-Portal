@@ -5,7 +5,7 @@ import { db } from '@/lib/db';
 import { calculateMeritScore, calculatePercentage } from '@/lib/merit';
 import { evaluateEligibility } from '@/lib/eligibility';
 import { step1Schema, step2Schema, step3Schema, step4Schema, step5Schema } from '@/lib/schemas/application';
-import { decryptBankAccount, encryptBankAccount, maskBankAccount, hashBankAccount } from '@/lib/crypto/field-encryption';
+import { decryptBankAccount, encryptBankAccount, hashBankAccount } from '@/lib/crypto/field-encryption';
 import { verifyStateChangingOrigin } from '@/lib/auth/origin-guard';
 import { getClientIp } from '@/lib/rate-limit';
 
@@ -73,7 +73,7 @@ export async function GET(
       }
     }
     appData.is_masked = false;
-    delete (appData as any).bank_acc_no_encrypted;
+    delete (appData as Record<string, unknown>).bank_acc_no_encrypted;
 
     // If admin views full bank details, log audit per M4 / H1
     if (session.role === 'admin') {
@@ -92,8 +92,8 @@ export async function GET(
     const last4 = appData.bank_acc_last4 || (appData.bank_acc_no ? appData.bank_acc_no.slice(-4) : '');
     appData.bank_acc_no = last4 ? `XXXX${last4}` : 'XXXXXXXX';
     appData.is_masked = true;
-    delete (appData as any).confirm_bank_acc_no;
-    delete (appData as any).bank_acc_no_encrypted;
+    delete (appData as Record<string, unknown>).confirm_bank_acc_no;
+    delete (appData as Record<string, unknown>).bank_acc_no_encrypted;
   }
 
   // Status timeline built from timestamps and visible remarks
@@ -316,7 +316,6 @@ export async function PATCH(
       }
       const rawBank = res.data.bank_acc_no;
       const encBank = encryptBankAccount(rawBank);
-      const bankHash = hashBankAccount(rawBank);
       const bankLast4 = rawBank.slice(-4);
       validatedCleanData = {
         ...res.data,

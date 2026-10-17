@@ -27,8 +27,8 @@ async function rotateKeys() {
   try {
     getEncryptionKey("ENCRYPTION_KEY", true);
     getEncryptionKey("ENCRYPTION_KEY_PREVIOUS", true);
-  } catch (err: any) {
-    console.error("Key validation failed:", err.message);
+  } catch (err: unknown) {
+    console.error("Key validation failed:", err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
 
@@ -68,8 +68,8 @@ async function rotateKeys() {
         } else {
           profilesRotated++;
         }
-      } catch (err: any) {
-        console.error(`Failed to rotate profile ${prof.id}:`, err.message);
+      } catch (err: unknown) {
+        console.error(`Failed to rotate profile ${prof.id}:`, err instanceof Error ? err.message : String(err));
       }
     }
   }

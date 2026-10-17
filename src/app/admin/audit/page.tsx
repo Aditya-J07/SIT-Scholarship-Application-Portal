@@ -3,10 +3,11 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { AuditRecord } from '@/lib/types';
 
 export default function AdminAuditLogPage() {
   const router = useRouter();
-  const [logs, setLogs] = useState<any[]>([]);
+  const [logs, setLogs] = useState<AuditRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {

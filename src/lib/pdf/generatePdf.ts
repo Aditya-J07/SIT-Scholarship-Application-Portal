@@ -195,7 +195,6 @@ export async function generateApplicationPdf(
   const rowHeight = 22;
   const col1W = 28; // Number "1)"
   const col2W = 185; // Label
-  const col3W = tableWidth - col1W - col2W; // Value
 
   const drawRow = (
     num: string,

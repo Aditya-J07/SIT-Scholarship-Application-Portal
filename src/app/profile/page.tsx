@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { UserProfile, DataRequestRecord } from '@/lib/types';
 
@@ -18,7 +18,7 @@ export default function ProfilePage() {
   const [submittingRequest, setSubmittingRequest] = useState(false);
   const [dataReqMessage, setDataReqMessage] = useState<string | null>(null);
 
-  const loadData = () => {
+  const loadData = useCallback(() => {
     Promise.all([
       fetch('/api/profile').then((res) => (res.ok ? res.json() : Promise.reject())),
       fetch('/api/profile/data-requests').then((res) => (res.ok ? res.json() : { requests: [] })),
@@ -29,11 +29,11 @@ export default function ProfilePage() {
         setLoading(false);
       })
       .catch(() => router.push('/login'));
-  };
+  }, [router]);
 
   useEffect(() => {
     loadData();
-  }, [router]);
+  }, [loadData]);
 
   const handleIfscLookup = async (ifsc: string) => {
     const cleanIfsc = ifsc.trim().toUpperCase();

@@ -165,6 +165,7 @@ export interface ApplicationFileRecord {
   sha256: string;
   original_name: string;
   uploaded_at: string;
+  url?: string;
 }
 
 export interface RemarkRecord {

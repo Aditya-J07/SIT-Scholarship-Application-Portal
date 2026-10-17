@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { DataRequestRecord } from '@/lib/types';
@@ -14,7 +14,7 @@ export default function AdminDataRequestsPage() {
   const [adminNote, setAdminNote] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
 
-  const loadRequests = () => {
+  const loadRequests = useCallback(() => {
     fetch('/api/admin/data-requests')
       .then((res) => {
         if (!res.ok) throw new Error('Unauthorized');
@@ -25,11 +25,11 @@ export default function AdminDataRequestsPage() {
         setLoading(false);
       })
       .catch(() => router.push('/login'));
-  };
+  }, [router]);
 
   useEffect(() => {
     loadRequests();
-  }, [router]);
+  }, [loadRequests]);
 
   const handleUpdateStatus = async (id: string, status: 'resolved' | 'rejected' | 'in_progress') => {
     setSubmitting(true);

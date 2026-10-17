@@ -8,7 +8,7 @@ interface FileUploadFieldProps {
   applicationId: string;
   required?: boolean;
   description?: string;
-  existingFile?: { id: string; original_name: string; size_bytes: number; url: string } | null;
+  existingFile?: { id: string; original_name: string; size_bytes: number; url?: string } | null;
   onUploaded: (fileId: string) => void;
   accept?: string;
   maxSizeMb?: number;

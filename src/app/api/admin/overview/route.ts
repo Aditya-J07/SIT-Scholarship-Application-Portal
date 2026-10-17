@@ -22,7 +22,6 @@ export async function GET() {
 
   // 2. Fetch scholarships
   const scholarships = await db.listScholarships();
-  const schCodeMap = new Map(scholarships.map((s) => [s.id, s.code]));
 
   // 3. Counts by Status
   const countsByStatus: Record<string, number> = {

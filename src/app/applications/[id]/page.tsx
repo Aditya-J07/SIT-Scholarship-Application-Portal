@@ -3,6 +3,16 @@
 import React, { useState, useEffect, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { ApplicationRecord, Scholarship, ApplicationFileRecord, RemarkRecord } from '@/lib/types';
+
+interface TimelineStep {
+  status: string;
+  label: string;
+  date?: string;
+  note?: string;
+  active: boolean;
+  completed: boolean;
+}
 
 export default function ApplicationDetailPage({
   params,
@@ -12,11 +22,11 @@ export default function ApplicationDetailPage({
   const router = useRouter();
   const { id } = use(params);
 
-  const [application, setApplication] = useState<any>(null);
-  const [scholarship, setScholarship] = useState<any>(null);
-  const [files, setFiles] = useState<any[]>([]);
-  const [remarks, setRemarks] = useState<any[]>([]);
-  const [timeline, setTimeline] = useState<any[]>([]);
+  const [application, setApplication] = useState<ApplicationRecord | null>(null);
+  const [scholarship, setScholarship] = useState<Scholarship | null>(null);
+  const [files, setFiles] = useState<ApplicationFileRecord[]>([]);
+  const [remarks, setRemarks] = useState<RemarkRecord[]>([]);
+  const [timeline, setTimeline] = useState<TimelineStep[]>([]);
   const [loading, setLoading] = useState(true);
   const [withdrawing, setWithdrawing] = useState(false);
 
@@ -64,7 +74,7 @@ export default function ApplicationDetailPage({
     }
   };
 
-  if (loading) {
+  if (loading || !application) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-16 text-center text-xs text-gray-600">
         Loading application details...
@@ -72,7 +82,7 @@ export default function ApplicationDetailPage({
     );
   }
 
-  const appData = application?.data || {};
+  const appData = application.data || {};
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
@@ -291,7 +301,7 @@ export default function ApplicationDetailPage({
                   <div className="text-[10px] text-gray-500 uppercase">{file.kind} • {Math.round(file.size_bytes / 1024)} KB</div>
                 </div>
                 <a
-                  href={file.url}
+                  href={file.url || `/api/files/${file.id}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="gov-btn gov-btn-outline text-[11px] py-1 px-2.5 min-h-[28px]"

@@ -11,7 +11,7 @@ export async function GET(
   { params }: { params: Promise<{ code: string }> }
 ) {
   // 1. Require authorized session (H2)
-  const { session, errorResponse } = await getAuthorizedSession();
+  const { errorResponse } = await getAuthorizedSession();
   if (errorResponse) return errorResponse;
 
   // 2. Rate limit: 30 requests per minute per IP

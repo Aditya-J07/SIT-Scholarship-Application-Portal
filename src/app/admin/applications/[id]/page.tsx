@@ -4,6 +4,7 @@ import React, { useState, useEffect, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import EligibilityPanel from '@/components/EligibilityPanel';
+import { ApplicationRecord, Scholarship, ApplicationFileRecord, RemarkRecord } from '@/lib/types';
 
 export default function AdminApplicationDetailPage({
   params,
@@ -13,16 +14,15 @@ export default function AdminApplicationDetailPage({
   const router = useRouter();
   const { id } = use(params);
 
-  const [application, setApplication] = useState<any>(null);
-  const [scholarship, setScholarship] = useState<any>(null);
-  const [files, setFiles] = useState<any[]>([]);
-  const [remarks, setRemarks] = useState<any[]>([]);
-  const [session, setSession] = useState<any>(null);
+  const [application, setApplication] = useState<ApplicationRecord | null>(null);
+  const [scholarship, setScholarship] = useState<Scholarship | null>(null);
+  const [files, setFiles] = useState<ApplicationFileRecord[]>([]);
+  const [remarks, setRemarks] = useState<RemarkRecord[]>([]);
+  const [session, setSession] = useState<{ userId: string; role: string; fullName: string; email: string } | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Form states for decisions and notes
   const [decisionRemark, setDecisionRemark] = useState('');
-  const [decisionAction, setDecisionAction] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [internalNote, setInternalNote] = useState('');
   const [message, setMessage] = useState<string | null>(null);
@@ -83,7 +83,6 @@ export default function AdminApplicationDetailPage({
 
       if (res.ok) {
         setApplication(data.application);
-        setDecisionAction(null);
         setDecisionRemark('');
         setMessage(`Action '${action.toUpperCase()}' completed successfully and notification dispatched.`);
         // Reload remarks
@@ -164,7 +163,7 @@ export default function AdminApplicationDetailPage({
     }
   };
 
-  if (loading) {
+  if (loading || !application) {
     return (
       <div className="mx-auto max-w-6xl px-4 py-16 text-center text-xs text-gray-600">
         Loading application details for scrutiny...
@@ -172,7 +171,7 @@ export default function AdminApplicationDetailPage({
     );
   }
 
-  const appData = application?.data || {};
+  const appData = application.data || {};
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
@@ -265,7 +264,7 @@ export default function AdminApplicationDetailPage({
                 <div><span className="text-gray-500 font-medium">7. c) Percentage:</span> <span className="font-bold text-[#AC3D47]">{appData.percentage}%</span></div>
                 {appData.cgpa && <div><span className="text-gray-500 font-medium">CGPA (Years 2–4):</span> <span className="font-bold font-mono">{appData.cgpa} / 10.0</span></div>}
                 <div><span className="text-gray-500 font-medium">Calculated Merit Score:</span> <span className="font-mono font-bold text-base text-[#AC3D47]">{application.merit_score}</span></div>
-                {appData.year_of_study > 1 && (
+                {(appData.year_of_study ?? 0) > 1 && (
                   <div><span className="text-gray-500 font-medium">Backlog History:</span> <span className={appData.has_backlog_history ? 'text-red-700 font-bold' : 'text-emerald-700 font-bold'}>{appData.has_backlog_history ? 'Has Backlog (Disqualified)' : 'Zero Backlogs (Eligible)'}</span></div>
                 )}
               </div>

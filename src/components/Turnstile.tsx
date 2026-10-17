@@ -52,7 +52,6 @@ export const Turnstile = forwardRef<TurnstileRef, TurnstileProps>(function Turns
   const containerRef = useRef<HTMLDivElement | null>(null);
   const widgetIdRef = useRef<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [isReady, setIsReady] = useState(false);
 
   const siteKey =
     propSiteKey || process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || "";
@@ -91,9 +90,8 @@ export const Turnstile = forwardRef<TurnstileRef, TurnstileProps>(function Turns
       });
 
       widgetIdRef.current = widgetId;
-      setIsReady(true);
-    } catch (err: any) {
-      const msg = err?.message || "Failed to render security verification widget";
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to render security verification widget";
       setLoadError(msg);
       onError?.(msg);
     }

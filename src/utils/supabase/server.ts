@@ -2,7 +2,11 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
 export async function createClient(customCookieStore?: Awaited<ReturnType<typeof cookies>>) {
-  let cookieStore: any;
+  let cookieStore: Awaited<ReturnType<typeof cookies>> | {
+    getAll: () => { name: string; value: string }[];
+    set: (name: string, value: string, options?: Record<string, unknown>) => void;
+    get: (name: string) => { name: string; value: string } | undefined;
+  };
   if (customCookieStore) {
     cookieStore = customCookieStore;
   } else {
@@ -10,7 +14,9 @@ export async function createClient(customCookieStore?: Awaited<ReturnType<typeof
       cookieStore = await cookies();
     } catch {
       // Outside Next.js request scope (e.g. integration test environment)
-      cookieStore = (globalThis as any).__testCookieStore ?? {
+      cookieStore = (globalThis as unknown as {
+        __testCookieStore?: typeof cookieStore;
+      }).__testCookieStore ?? {
         getAll: () => [],
         set: () => {},
         get: () => undefined,

@@ -3,8 +3,8 @@ import { requireAdmin } from '@/lib/auth/admin-guard';
 import { db } from '@/lib/db';
 import { getClientIp } from '@/lib/rate-limit';
 
-export async function GET(request?: Request) {
-  const { session, errorResponse } = await requireAdmin();
+export async function GET(_request?: Request) {
+  const { errorResponse } = await requireAdmin();
   if (errorResponse) return errorResponse;
 
   const scholarships = await db.listScholarships();

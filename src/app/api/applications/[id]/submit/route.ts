@@ -10,7 +10,7 @@ import { sendNotification } from '@/lib/notifications';
 import { storage } from '@/lib/storage';
 import { ApplicationFormData, ApplicationFileRecord } from '@/lib/types';
 import { getClientIp } from '@/lib/rate-limit';
-import { decryptBankAccount, encryptBankAccount, hashBankAccount } from '@/lib/crypto/field-encryption';
+import { decryptBankAccount, encryptBankAccount } from '@/lib/crypto/field-encryption';
 
 export async function POST(
   request: Request,
@@ -219,8 +219,8 @@ export async function POST(
       bank_acc_no_encrypted: encBank,
       bank_acc_last4: bankLast4,
     };
-    delete (dataToSave as any).bank_acc_no;
-    delete (dataToSave as any).confirm_bank_acc_no;
+    delete (dataToSave as Record<string, unknown>).bank_acc_no;
+    delete (dataToSave as Record<string, unknown>).confirm_bank_acc_no;
 
     const finalApp = await db.submitApplication(application.id, {
       pdf_path: pdfFileName,

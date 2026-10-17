@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ApplicationRecord } from '@/lib/types';
@@ -13,11 +13,10 @@ export default function AdminMeritRankingPage() {
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [selectedAppIds, setSelectedAppIds] = useState<string[]>([]);
-  const [tieBreakNotes, setTieBreakNotes] = useState<Record<string, string>>({});
   const [awardingAppId, setAwardingAppId] = useState<string | null>(null);
   const [currentTieBreakNote, setCurrentTieBreakNote] = useState<string>('');
 
-  const loadData = () => {
+  const loadData = useCallback(() => {
     fetch('/api/admin/applications?pageSize=100&sortBy=merit')
       .then((res) => {
         if (!res.ok) throw new Error('Unauthorized');
@@ -28,11 +27,11 @@ export default function AdminMeritRankingPage() {
         setLoading(false);
       })
       .catch(() => router.push('/login'));
-  };
+  }, [router]);
 
   useEffect(() => {
     loadData();
-  }, [router]);
+  }, [loadData]);
 
   // Filter for selected scholarship and study year
   const filteredApps = applications
@@ -101,7 +100,7 @@ export default function AdminMeritRankingPage() {
 
   const handleOpenAwardDialog = (app: ApplicationRecord) => {
     setAwardingAppId(app.id);
-    setCurrentTieBreakNote(tieBreakNotes[app.id] || '');
+    setCurrentTieBreakNote('');
   };
 
   const handleConfirmAward = async (appId: string) => {

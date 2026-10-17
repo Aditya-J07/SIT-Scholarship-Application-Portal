@@ -9,8 +9,8 @@ import { getClientIp } from "@/lib/rate-limit";
 
 const ALLOWED_ROLES = new Set<UserRole>(["student", "reviewer", "admin"]);
 
-export async function GET(request?: Request) {
-  const { session, errorResponse } = await requireAdminSession({ allowReviewer: false });
+export async function GET(_request?: Request) {
+  const { errorResponse } = await requireAdminSession({ allowReviewer: false });
   if (errorResponse) return errorResponse;
 
   const usersList = await db.listUsers();
