@@ -132,25 +132,75 @@ export async function GET(request: Request) {
   }
 
   if (format === 'zip') {
-    // Generate ZIP of PDF files
+    // Limit one ZIP to 15 PDFs per request with paging (page parameter)
+    // Ensures response body stays comfortably below Vercel's 4.5 MB serverless limit
+    const PAGE_SIZE = 15;
+    const rawPage = searchParams.get('page');
+    const pageNum = rawPage ? parseInt(rawPage, 10) : 1;
+    const page = isNaN(pageNum) || pageNum < 1 ? 1 : pageNum;
+
+    // Filter to applications that have generated PDFs
+    const appsWithPdf = apps.filter((a) => Boolean(a.pdf_path));
+    const totalPdfs = appsWithPdf.length;
+    const totalPages = Math.max(1, Math.ceil(totalPdfs / PAGE_SIZE));
+
+    if (totalPdfs === 0) {
+      return NextResponse.json(
+        { error: { message: 'No PDF applications found matching the selected filter criteria.' } },
+        { status: 404 }
+      );
+    }
+
+    if (page > totalPages) {
+      return NextResponse.json(
+        { error: { message: `Requested page ${page} exceeds total available pages (${totalPages}).` } },
+        { status: 400 }
+      );
+    }
+
+    const startIndex = (page - 1) * PAGE_SIZE;
+    const pageApps = appsWithPdf.slice(startIndex, startIndex + PAGE_SIZE);
+
     const zip = new JSZip();
-    for (const app of apps) {
+    let attachedCount = 0;
+    for (const app of pageApps) {
       if (app.pdf_path) {
         const content = await storage.getFileBuffer(app.pdf_path);
         if (content) {
           zip.file(`${app.ref_no}.pdf`, content);
+          attachedCount++;
         }
       }
     }
 
-    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' });
+    if (attachedCount === 0) {
+      return NextResponse.json(
+        { error: { message: 'No valid PDF files could be retrieved for this page.' } },
+        { status: 404 }
+      );
+    }
+
+    const zipBuffer = await zip.generateAsync({
+      type: 'nodebuffer',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    });
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    const filename = totalPages > 1
+      ? `SIT_Scholarship_PDFs_Part${page}_of_${totalPages}_${dateStr}.zip`
+      : `SIT_Scholarship_PDFs_${dateStr}.zip`;
 
     return new NextResponse(new Uint8Array(zipBuffer), {
       status: 200,
       headers: {
         'Content-Type': 'application/zip',
-        'Content-Disposition': `attachment; filename="SIT_Scholarship_PDFs_${new Date().toISOString().split('T')[0]}.zip"`,
+        'Content-Disposition': `attachment; filename="${filename}"`,
         'X-Content-Type-Options': 'nosniff',
+        'X-Total-Count': String(totalPdfs),
+        'X-Total-Pages': String(totalPages),
+        'X-Current-Page': String(page),
+        'X-Page-Size': String(PAGE_SIZE),
       },
     });
   }

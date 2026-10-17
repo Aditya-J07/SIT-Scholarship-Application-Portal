@@ -125,6 +125,7 @@ export default function ApplyWizardPage({
         body: JSON.stringify({
           step: targetStep,
           stepData: formData,
+          last_updated_at: application.updated_at || new Date().toISOString(),
         }),
       });
 

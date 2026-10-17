@@ -17,6 +17,7 @@ export default function AdminApplicationsTablePage() {
   const [sortBy, setSortBy] = useState('merit');
   const [order, setOrder] = useState('desc');
   const [loading, setLoading] = useState(true);
+  const [zipPage, setZipPage] = useState(1);
 
   useEffect(() => {
     fetchApplications();
@@ -88,19 +89,41 @@ export default function AdminApplicationsTablePage() {
           </h1>
         </div>
 
-        <div className="flex gap-2">
-          <a
-            href={`/api/admin/export?format=csv&scholarship=${scholarshipFilter}&status=${statusFilter}`}
-            className="gov-btn gov-btn-secondary text-xs"
-          >
-            Export Filtered CSV
-          </a>
-          <a
-            href={`/api/admin/export?format=zip&scholarship=${scholarshipFilter}&status=${statusFilter}`}
-            className="gov-btn gov-btn-outline text-xs"
-          >
-            Download PDFs (ZIP)
-          </a>
+        <div className="flex flex-col sm:items-end gap-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              href={`/api/admin/export?format=csv&scholarship=${scholarshipFilter}&status=${statusFilter}`}
+              className="gov-btn gov-btn-secondary text-xs"
+            >
+              Export Filtered CSV
+            </a>
+            <div className="flex items-center gap-1.5">
+              <a
+                href={`/api/admin/export?format=zip&scholarship=${scholarshipFilter}&status=${statusFilter}&page=${zipPage}`}
+                className="gov-btn gov-btn-outline text-xs"
+                title="Download applications batch (max 15 PDFs per ZIP)"
+              >
+                Download PDFs (ZIP: Part {zipPage})
+              </a>
+              {Math.ceil(total / 15) > 1 && (
+                <select
+                  value={zipPage}
+                  onChange={(e) => setZipPage(Number(e.target.value))}
+                  className="gov-input text-xs py-1 px-1.5 h-[32px] w-auto border-gray-400"
+                  aria-label="Select ZIP batch part"
+                >
+                  {Array.from({ length: Math.ceil(total / 15) }, (_, i) => i + 1).map((p) => (
+                    <option key={p} value={p}>
+                      Part {p} ({((p - 1) * 15) + 1}–{Math.min(p * 15, total)})
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          </div>
+          <span className="text-[10px] text-gray-500 text-right">
+            ZIP exports are limited to 15 PDFs per request to comply with Vercel&apos;s 4.5 MB response body limit.
+          </span>
         </div>
       </div>
 

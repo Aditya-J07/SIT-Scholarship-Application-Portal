@@ -8,12 +8,18 @@ export async function GET(request: Request) {
   const rawNext = searchParams.get("next");
   const validatedNext = validateRedirectPath(rawNext);
 
-  // In production, build redirect strictly from NEXT_PUBLIC_SITE_URL without trusting forwarded headers or request origin
-  const siteUrl =
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    process.env.NEXT_PUBLIC_APP_URL ||
-    (process.env.NODE_ENV !== "production" ? origin : "https://sit.ac.in");
-  const safeBase = siteUrl.replace(/\/$/, "");
+  // In production, build redirect strictly from NEXT_PUBLIC_SITE_URL; fail closed with clear error if missing
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
+
+  if (process.env.NODE_ENV === "production" && !siteUrl) {
+    console.error("[AuthCallback] Configuration error: NEXT_PUBLIC_SITE_URL is missing in production environment.");
+    return NextResponse.json(
+      { error: { message: "Server configuration error: NEXT_PUBLIC_SITE_URL is required in production." } },
+      { status: 500 }
+    );
+  }
+
+  const safeBase = (siteUrl || (process.env.NODE_ENV !== "production" ? origin : "")).replace(/\/$/, "");
 
   if (code) {
     const supabase = await createClient();

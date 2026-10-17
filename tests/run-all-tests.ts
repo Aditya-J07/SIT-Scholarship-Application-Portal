@@ -1063,6 +1063,140 @@ async function runTests() {
         "test_db"
       );
 
+      // --- TEST 2b-2 (Phase 2f): Reviewer and Admin at aal2 cannot PATCH a student's draft ---
+      await setAuthenticatedSession(emailRev, "TestPassword123!@#", true);
+      const revPatchDraft = await patchApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${appAId}`, {
+          method: "PATCH",
+          headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+          body: JSON.stringify({
+            step: 1,
+            stepData: {
+              scholarship_code: "MNC",
+              full_name: "MALICIOUS REV EDIT",
+              usn: "1SI23CS089",
+              dob: "2005-05-15",
+              nationality: "Indian",
+              father_or_guardian_name: "REV GUARD",
+              address: "Campus",
+              mobile: "9880123456",
+              email: "rohan@sit.ac.in",
+            },
+            last_updated_at: new Date().toISOString(),
+          }),
+        }),
+        { params: Promise.resolve({ id: appAId }) }
+      );
+
+      await setAuthenticatedSession(emailAdm, "TestPassword123!@#", true);
+      const admPatchDraft = await patchApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${appAId}`, {
+          method: "PATCH",
+          headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+          body: JSON.stringify({
+            step: 1,
+            stepData: {
+              scholarship_code: "MNC",
+              full_name: "MALICIOUS ADM EDIT",
+              usn: "1SI23CS089",
+              dob: "2005-05-15",
+              nationality: "Indian",
+              father_or_guardian_name: "ADM GUARD",
+              address: "Campus",
+              mobile: "9880123456",
+              email: "rohan@sit.ac.in",
+            },
+            last_updated_at: new Date().toISOString(),
+          }),
+        }),
+        { params: Promise.resolve({ id: appAId }) }
+      );
+
+      // --- TEST 2b-3 (Phase 2f): Owning student draft concurrency check (last_updated_at required, 409 on stale/missing) ---
+      await setAuthenticatedSession(emailA, "TestPassword123!@#");
+      const missingTimePatch = await patchApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${appAId}`, {
+          method: "PATCH",
+          headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+          body: JSON.stringify({
+            step: 1,
+            stepData: {
+              scholarship_code: "MNC",
+              full_name: "ROHAN PATIL",
+              usn: "1SI23CS089",
+              dob: "2005-05-15",
+              nationality: "Indian",
+              father_or_guardian_name: "BASAVARAJ PATIL",
+              address: "Room 204, SIT Campus Hostel, Tumakuru",
+              mobile: "9880123456",
+              email: "rohan@sit.ac.in",
+            },
+          }),
+        }),
+        { params: Promise.resolve({ id: appAId }) }
+      );
+
+      const staleTimePatch = await patchApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${appAId}`, {
+          method: "PATCH",
+          headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+          body: JSON.stringify({
+            step: 1,
+            stepData: {
+              scholarship_code: "MNC",
+              full_name: "ROHAN PATIL",
+              usn: "1SI23CS089",
+              dob: "2005-05-15",
+              nationality: "Indian",
+              father_or_guardian_name: "BASAVARAJ PATIL",
+              address: "Room 204, SIT Campus Hostel, Tumakuru",
+              mobile: "9880123456",
+              email: "rohan@sit.ac.in",
+            },
+            last_updated_at: new Date(Date.now() - 3600 * 1000).toISOString(),
+          }),
+        }),
+        { params: Promise.resolve({ id: appAId }) }
+      );
+
+      const { data: currentAppA } = await testAdmin.from("applications").select("updated_at").eq("id", appAId).single();
+      const validUpdatedAt = currentAppA?.updated_at || new Date().toISOString();
+
+      const validTimePatch = await patchApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${appAId}`, {
+          method: "PATCH",
+          headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+          body: JSON.stringify({
+            step: 1,
+            stepData: {
+              scholarship_code: "MNC",
+              full_name: "ROHAN PATIL",
+              usn: "1SI23CS089",
+              dob: "2005-05-15",
+              nationality: "Indian",
+              father_or_guardian_name: "BASAVARAJ PATIL",
+              address: "Room 204, SIT Campus Hostel, Tumakuru",
+              mobile: "9880123456",
+              email: "rohan@sit.ac.in",
+            },
+            last_updated_at: validUpdatedAt,
+          }),
+        }),
+        { params: Promise.resolve({ id: appAId }) }
+      );
+
+      assert(
+        revPatchDraft.status === 403 && admPatchDraft.status === 403,
+        "reviewer and admin-aal2 cannot PATCH a student's draft application (403)",
+        "test_db"
+      );
+
+      assert(
+        missingTimePatch.status === 409 && staleTimePatch.status === 409 && validTimePatch.status === 200,
+        "draft save requires last_updated_at and returns 409 when missing or stale",
+        "test_db"
+      );
+
       // --- TEST 2c (H1): bank account is encrypted in DB, masked for reviewer, decrypted for student owner and audited admin ---
       const { data: rawAppDb } = await testAdmin.from("applications").select("data").eq("id", appAId).single();
       const dbData = rawAppDb?.data || {};
@@ -1135,6 +1269,61 @@ async function runTests() {
       assert(
         sub1.status === 200 && sub2.status === 400 && submittedApps?.length === 1,
         "double submit creates one submission",
+        "test_db"
+      );
+
+      // --- TEST 3b (Phase 2f): Reviewer and Admin at aal2 cannot PATCH a student's submitted application ---
+      await setAuthenticatedSession(emailRev, "TestPassword123!@#", true);
+      const revPatchSubmitted = await patchApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${appAId}`, {
+          method: "PATCH",
+          headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+          body: JSON.stringify({
+            step: 1,
+            stepData: {
+              scholarship_code: "MNC",
+              full_name: "MALICIOUS REV SUBMITTED EDIT",
+              usn: "1SI23CS089",
+              dob: "2005-05-15",
+              nationality: "Indian",
+              father_or_guardian_name: "REV GUARD",
+              address: "Campus",
+              mobile: "9880123456",
+              email: "rohan@sit.ac.in",
+            },
+            last_updated_at: new Date().toISOString(),
+          }),
+        }),
+        { params: Promise.resolve({ id: appAId }) }
+      );
+
+      await setAuthenticatedSession(emailAdm, "TestPassword123!@#", true);
+      const admPatchSubmitted = await patchApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${appAId}`, {
+          method: "PATCH",
+          headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+          body: JSON.stringify({
+            step: 1,
+            stepData: {
+              scholarship_code: "MNC",
+              full_name: "MALICIOUS ADM SUBMITTED EDIT",
+              usn: "1SI23CS089",
+              dob: "2005-05-15",
+              nationality: "Indian",
+              father_or_guardian_name: "ADM GUARD",
+              address: "Campus",
+              mobile: "9880123456",
+              email: "rohan@sit.ac.in",
+            },
+            last_updated_at: new Date().toISOString(),
+          }),
+        }),
+        { params: Promise.resolve({ id: appAId }) }
+      );
+
+      assert(
+        revPatchSubmitted.status === 403 && admPatchSubmitted.status === 403,
+        "reviewer and admin-aal2 cannot PATCH a student's submitted application (403)",
         "test_db"
       );
 
@@ -1486,10 +1675,15 @@ async function runTests() {
   const fakeHtml = Buffer.from("<html><script>alert(1)</script></html>");
   assert(detectMimeFromBytes(fakeHtml) === null, "Disguised HTML payload rejected");
 
-  // Path traversal attempt in file name
-  const traversalFilename = "../../../etc/passwd";
-  const hasTraversal = traversalFilename.includes("..") || traversalFilename.includes("/") || traversalFilename.includes("\\");
-  assert(hasTraversal, "Path traversal attempt ('../') in file name detected and blocked");
+  // File name check: reject names containing path separators or NUL, not ".." inside normal name
+  function isProhibitedFilename(name: string): boolean {
+    return name.includes("/") || name.includes("\\") || name.includes("\0");
+  }
+
+  assert(isProhibitedFilename("../../../etc/passwd"), "File name with forward slashes is rejected");
+  assert(isProhibitedFilename("..\\..\\windows\\system32"), "File name with backslashes is rejected");
+  assert(isProhibitedFilename("document\0.pdf"), "File name with NUL character is rejected");
+  assert(!isProhibitedFilename("normal..marks..card.pdf"), "File name with '..' inside a normal name is accepted");
 
   // 11. Draft Save Strict Validation & Key Stripping Tests (Part B2)
   console.log("\n--- 11. Draft Save Strict Validation Tests (B2) ---");
@@ -1593,6 +1787,40 @@ async function runTests() {
   });
   const missingOriginRes = verifyStateChangingOrigin(missingOriginReq);
   assert(missingOriginRes?.status === 403, "Missing origin header on POST rejected with HTTP 403");
+
+  // In production, missing NEXT_PUBLIC_SITE_URL in origin guard fails closed with HTTP 500
+  const origSiteEnv = {
+    NODE_ENV: process.env.NODE_ENV,
+    NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL,
+    NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+  };
+  try {
+    (process.env as any).NODE_ENV = "production";
+    delete process.env.NEXT_PUBLIC_SITE_URL;
+    delete process.env.NEXT_PUBLIC_APP_URL;
+
+    const prodMissingSiteReq = new Request("http://localhost:3000/api/applications", {
+      method: "POST",
+      headers: { origin: "http://localhost:3000" },
+    });
+    const prodMissingSiteRes = verifyStateChangingOrigin(prodMissingSiteReq);
+    assert(
+      prodMissingSiteRes?.status === 500,
+      "In production, missing NEXT_PUBLIC_SITE_URL fails with HTTP 500 in origin guard"
+    );
+  } finally {
+    (process.env as any).NODE_ENV = origSiteEnv.NODE_ENV;
+    if (origSiteEnv.NEXT_PUBLIC_SITE_URL !== undefined) {
+      process.env.NEXT_PUBLIC_SITE_URL = origSiteEnv.NEXT_PUBLIC_SITE_URL;
+    } else {
+      delete process.env.NEXT_PUBLIC_SITE_URL;
+    }
+    if (origSiteEnv.NEXT_PUBLIC_APP_URL !== undefined) {
+      process.env.NEXT_PUBLIC_APP_URL = origSiteEnv.NEXT_PUBLIC_APP_URL;
+    } else {
+      delete process.env.NEXT_PUBLIC_APP_URL;
+    }
+  }
 
   // 15. Reviewer Workflow & Eligibility Boundary Tests (Part B7, B8)
   console.log("\n--- 15. Eligibility Boundary & Reviewer Workflow Tests (B7, B8) ---");

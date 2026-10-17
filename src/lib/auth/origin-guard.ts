@@ -18,12 +18,22 @@ export function verifyStateChangingOrigin(request: Request): NextResponse | null
     );
   }
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || (process.env.NODE_ENV !== "production" ? "http://localhost:3000" : "");
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
+
+  if (process.env.NODE_ENV === "production" && !siteUrl) {
+    console.error("[OriginGuard] Configuration error: NEXT_PUBLIC_SITE_URL is missing in production environment.");
+    return NextResponse.json(
+      { error: { code: "SERVER_MISCONFIGURED", message: "Server configuration error: NEXT_PUBLIC_SITE_URL is required in production." } },
+      { status: 500 }
+    );
+  }
+
+  const effectiveSiteUrl = siteUrl || (process.env.NODE_ENV !== "production" ? "http://localhost:3000" : "");
   const allowedOrigins: string[] = [];
 
-  if (siteUrl) {
+  if (effectiveSiteUrl) {
     try {
-      const parsedSite = new URL(siteUrl).origin;
+      const parsedSite = new URL(effectiveSiteUrl).origin;
       allowedOrigins.push(parsedSite);
     } catch {
       // fallback

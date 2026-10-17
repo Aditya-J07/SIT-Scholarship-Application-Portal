@@ -68,10 +68,10 @@ export async function POST(
       );
     }
 
-    // Path traversal attempt check
-    if (file.name.includes('..') || file.name.includes('/') || file.name.includes('\\')) {
+    // Reject file names containing path separators or NUL bytes
+    if (file.name.includes('/') || file.name.includes('\\') || file.name.includes('\0')) {
       return NextResponse.json(
-        { error: { message: 'Invalid file name. Path traversal characters are strictly forbidden.' } },
+        { error: { message: 'Invalid file name. Path separators and NUL bytes are strictly forbidden.' } },
         { status: 400 }
       );
     }

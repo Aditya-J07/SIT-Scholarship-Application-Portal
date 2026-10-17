@@ -109,11 +109,13 @@ export async function PATCH(
     return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
   }
 
-  if (session.role === 'student' && application.student_id !== session.userId) {
+  // Only the owning student may edit their application. Reviewers and admins must be rejected with 403.
+  if (session.role !== 'student' || application.student_id !== session.userId) {
     return NextResponse.json({ error: { message: 'Forbidden' } }, { status: 403 });
   }
 
-  if (session.role === 'student' && application.status !== 'draft' && application.status !== 'needs_correction') {
+  // Owning student may only edit draft or needs_correction applications
+  if (application.status !== 'draft' && application.status !== 'needs_correction') {
     return NextResponse.json(
       { error: { message: 'Application is locked and cannot be edited after submission' } },
       { status: 400 }
@@ -126,7 +128,6 @@ export async function PATCH(
 
     // Reject client manipulation of forbidden server-computed / structural fields
     const FORBIDDEN_CLIENT_KEYS = [
-      'scholarship_code',
       'status',
       'ref_no',
       'merit_score',
@@ -145,11 +146,32 @@ export async function PATCH(
       }
     }
 
-    // Concurrency conflict check: prevent silent overwrite if updated in another tab
-    if (last_updated_at && application.updated_at) {
+    // Client may not change scholarship_code
+    if (
+      'scholarship_code' in body ||
+      (stepData &&
+        typeof stepData === 'object' &&
+        'scholarship_code' in stepData &&
+        stepData.scholarship_code !== application.data.scholarship_code)
+    ) {
+      return NextResponse.json(
+        { error: { message: "Modification of 'scholarship_code' is prohibited from client payload." } },
+        { status: 400 }
+      );
+    }
+
+    // Concurrency conflict check: last_updated_at is required on draft save; return 409 when stale or missing
+    if (!last_updated_at) {
+      return NextResponse.json(
+        { error: { message: 'last_updated_at timestamp is required for draft concurrency control.' } },
+        { status: 409 }
+      );
+    }
+
+    if (application.updated_at) {
       const clientTime = new Date(last_updated_at).getTime();
       const serverTime = new Date(application.updated_at).getTime();
-      if (serverTime > clientTime + 1000) {
+      if (isNaN(clientTime) || serverTime > clientTime + 1000) {
         return NextResponse.json(
           { error: { message: 'This draft was updated in another session. Please reload to avoid overwriting newer data.' } },
           { status: 409 }
@@ -169,7 +191,11 @@ export async function PATCH(
     let validatedCleanData: Record<string, unknown> = {};
 
     if (step === 1) {
-      const res = step1Schema.safeParse(stepData);
+      const step1Input = {
+        scholarship_code: application.data.scholarship_code || 'MNC',
+        ...(stepData && typeof stepData === 'object' ? stepData : {}),
+      };
+      const res = step1Schema.safeParse(step1Input);
       if (!res.success) {
         return NextResponse.json(
           { error: { message: res.error.issues[0]?.message || 'Invalid step 1 data', fields: res.error.flatten().fieldErrors } },

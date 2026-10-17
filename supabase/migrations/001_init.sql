@@ -54,9 +54,9 @@ CREATE TABLE IF NOT EXISTS public.cycles (
     id TEXT PRIMARY KEY,
     scholarship_id TEXT NOT NULL REFERENCES public.scholarships(id) ON DELETE CASCADE,
     academic_year TEXT NOT NULL, -- e.g. "2026-2027"
-    opens_at TIMESTAMPTZ NOT NULL,
-    closes_at TIMESTAMPTZ NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('open', 'closed', 'upcoming')) DEFAULT 'open',
+    opens_at TIMESTAMPTZ,
+    closes_at TIMESTAMPTZ,
+    status TEXT NOT NULL CHECK (status IN ('open', 'closed', 'upcoming')) DEFAULT 'closed',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -324,24 +324,26 @@ ON CONFLICT (code) DO UPDATE SET
     rules = EXCLUDED.rules,
     description = EXCLUDED.description;
 
--- Active Academic Cycle
--- TODO [COLLEGE DECISION REQUIRED]: Confirm exact opening date and closing date with Accounts Section
+-- Seed Academic Cycles as 'closed' with NULL dates (006 allows NULL dates until confirmed by Accounts Section)
 INSERT INTO public.cycles (id, scholarship_id, academic_year, opens_at, closes_at, status)
 VALUES 
 (
     'cycle_mnc_2026',
     'sch_mnc',
     '2026-2027',
-    '2026-09-01T00:00:00Z', -- TODO: Confirm official notification date
-    '2026-12-31T23:59:59Z', -- TODO: Confirm official last submission date with Accounts Section
-    'open'
+    NULL,
+    NULL,
+    'closed'
 ),
 (
     'cycle_sska_2026',
     'sch_sska',
     '2026-2027',
-    '2026-09-01T00:00:00Z',
-    '2026-12-31T23:59:59Z',
-    'open'
+    NULL,
+    NULL,
+    'closed'
 )
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+    opens_at = EXCLUDED.opens_at,
+    closes_at = EXCLUDED.closes_at,
+    status = EXCLUDED.status;

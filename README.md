@@ -172,3 +172,21 @@ The portal runs at **`http://localhost:3000`**.
 - `/admin/scholarships`: Scholarship rules and cycle windows editor
 - `/admin/users`: Reviewer and Administrator account management (invite only)
 - `/admin/audit`: Immutable compliance audit trail
+
+---
+
+## 7. Proxy Lookups & Performance Notes
+
+### How the Proxy Lookups Work
+1. **Next.js Session Request Proxy (`src/proxy.ts` / Middleware)**:
+   - Intercepts incoming requests to refresh Supabase Auth sessions transparently via HTTP-only cookie exchange using `@supabase/ssr`.
+   - Protects student and staff route trees (`/dashboard`, `/apply/*`, `/admin/*`) before request processing reaches page components or API handlers.
+2. **Server-Side IFSC Proxy Lookup (`/api/ifsc/[code]`)**:
+   - Proxies Indian Financial System Code (IFSC) queries securely to `https://ifsc.razorpay.com/` on behalf of authenticated students during bank account entry.
+   - Shields external endpoints and prevents browser CORS restrictions.
+   - Requires an authenticated user session, enforces IP-based rate limiting (30 requests/minute), and validates IFSC regex syntax (`/^[A-Z]{4}0[A-Z0-9]{6}$/`).
+   - Employs a bounded in-memory cache (up to 500 entries) and Next.js 24-hour fetch revalidation cache (`revalidate: 86400`) to maximize responsiveness and minimize external queries.
+   - Provides graceful fallback to manual bank and branch entry if the lookup service is unreachable.
+
+### Performance & Page Speed
+- **TODO**: Measure production page speed, TTFB, and Core Web Vitals (LCP, INP, CLS) across desktop and mobile using Google PageSpeed Insights / Lighthouse and Vercel Speed Insights post-deployment.
