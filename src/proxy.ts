@@ -34,8 +34,12 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // A4: Server-side enforcement of must_change_password & staff access
-  if (user) {
+  // Part 5 Item 3: Avoid unnecessary database lookups.
+  // Profile lookup is strictly restricted to /admin routes where staff role authorization
+  // and 30-minute idle-timeout enforcement are required.
+  const isStaffAdminPage = pathname.startsWith("/admin") && !pathname.startsWith("/admin-login");
+
+  if (user && isStaffAdminPage) {
     try {
       const admin = getAdminClient();
       const { data: profile } = await admin
@@ -45,45 +49,21 @@ export async function proxy(request: NextRequest) {
         .maybeSingle();
 
       if (profile?.must_change_password) {
-        if (pathname.startsWith("/api/")) {
-          const allowedApiPaths = [
-            "/api/auth/change-password",
-            "/api/auth/logout",
-            "/api/auth/session",
-          ];
-          if (!allowedApiPaths.includes(pathname)) {
-            return NextResponse.json(
-              {
-                code: "PASSWORD_CHANGE_REQUIRED",
-                error: { message: "Password change is required before accessing portal features." },
-              },
-              { status: 403 }
-            );
-          }
-        } else if (
-          pathname !== "/change-password" &&
-          pathname !== "/login" &&
-          pathname !== "/admin-login" &&
-          pathname !== "/auth/callback"
-        ) {
-          return NextResponse.redirect(new URL("/change-password", request.url));
-        }
+        return NextResponse.redirect(new URL("/change-password", request.url));
       }
 
       // Role check: redirect non-staff away from /admin pages
-      if (pathname.startsWith("/admin") && !pathname.startsWith("/admin-login")) {
-        if (profile?.role !== "admin" && profile?.role !== "reviewer") {
-          return NextResponse.redirect(new URL("/admin-login", request.url));
-        }
+      if (profile?.role !== "admin" && profile?.role !== "reviewer") {
+        return NextResponse.redirect(new URL("/admin-login", request.url));
+      }
 
-        // Check 30-minute idle timeout on staff page requests
-        if (profile?.last_seen_at) {
-          const idleMinutes = (Date.now() - new Date(profile.last_seen_at).getTime()) / (1000 * 60);
-          if (idleMinutes > 30) {
-            const timeoutUrl = new URL("/admin-login", request.url);
-            timeoutUrl.searchParams.set("error", "Staff session expired due to 30 minutes of inactivity.");
-            return NextResponse.redirect(timeoutUrl);
-          }
+      // Check 30-minute idle timeout on staff page requests
+      if (profile?.last_seen_at) {
+        const idleMinutes = (Date.now() - new Date(profile.last_seen_at).getTime()) / (1000 * 60);
+        if (idleMinutes > 30) {
+          const timeoutUrl = new URL("/admin-login", request.url);
+          timeoutUrl.searchParams.set("error", "Staff session expired due to 30 minutes of inactivity.");
+          return NextResponse.redirect(timeoutUrl);
         }
       }
     } catch {

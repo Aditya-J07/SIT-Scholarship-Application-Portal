@@ -3,10 +3,19 @@
 import React, { useState, useEffect, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import WizardNav from '@/components/WizardNav';
 import EligibilityPanel from '@/components/EligibilityPanel';
-import SignaturePad from '@/components/SignaturePad';
 import FileUploadField from '@/components/FileUploadField';
+
+const SignaturePad = dynamic(() => import('@/components/SignaturePad'), {
+  ssr: false,
+  loading: () => (
+    <div className="p-4 text-center text-xs text-gray-500 bg-gray-50 border border-gray-200">
+      Loading digital signature canvas...
+    </div>
+  ),
+});
 import { useLanguage } from '@/components/LanguageToggle';
 import { SIT_COURSES, ENCLOSURES_METADATA, REQUIRE_GUARDIAN_CONSENT_FOR_MINORS } from '@/lib/constants';
 import { isApplicantMinor } from '@/lib/schemas/application';

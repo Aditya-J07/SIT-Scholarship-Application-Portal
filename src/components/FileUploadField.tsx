@@ -14,6 +14,72 @@ interface FileUploadFieldProps {
   maxSizeMb?: number;
 }
 
+async function compressImageIfNeeded(file: File, targetMaxBytes = 300 * 1024): Promise<File> {
+  if (typeof window === 'undefined' || !file.type.startsWith('image/') || file.size <= targetMaxBytes) {
+    return file;
+  }
+
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 1200;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(file);
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const tryQuality = (q: number) => {
+          canvas.toBlob(
+            (blob) => {
+              if (!blob) {
+                resolve(file);
+                return;
+              }
+              if (blob.size <= targetMaxBytes || q <= 0.4) {
+                const compressedFile = new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), {
+                  type: 'image/jpeg',
+                  lastModified: Date.now(),
+                });
+                resolve(compressedFile);
+              } else {
+                tryQuality(q - 0.15);
+              }
+            },
+            'image/jpeg',
+            q
+          );
+        };
+
+        tryQuality(0.85);
+      };
+      img.onerror = () => resolve(file);
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = () => resolve(file);
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function FileUploadField({
   label,
   kind,
@@ -42,8 +108,14 @@ export default function FileUploadField({
       setIsUploading(true);
       setError(null);
 
+      // Client-side photo compression (Part 5 Item 2: target <= 300 KB)
+      const fileToUpload =
+        kind === 'photo' || selectedFile.type.startsWith('image/')
+          ? await compressImageIfNeeded(selectedFile, 300 * 1024)
+          : selectedFile;
+
       const formData = new FormData();
-      formData.append('file', selectedFile);
+      formData.append('file', fileToUpload);
       formData.append('kind', kind);
 
       const res = await fetch(`/api/applications/${applicationId}/files`, {
