@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { UserProfile } from '@/lib/types';
+import { SIT_DEPARTMENTS } from '@/lib/constants/departments';
 
 export default function AdminUsersPage() {
   const router = useRouter();
@@ -15,7 +16,8 @@ export default function AdminUsersPage() {
     email: '',
     mobile: '',
     password: '',
-    role: 'admin',
+    role: 'reviewer',
+    department: '',
   });
   const [message, setMessage] = useState<string | null>(null);
 
@@ -52,7 +54,7 @@ export default function AdminUsersPage() {
       const data = await res.json();
       if (res.ok) {
         setShowAddModal(false);
-        setFormData({ full_name: '', email: '', mobile: '', password: '', role: 'admin' });
+        setFormData({ full_name: '', email: '', mobile: '', password: '', role: 'admin', department: '' });
         setMessage(`Account '${data.user.email}' created successfully.`);
         fetchUsers();
       } else {
@@ -224,23 +226,54 @@ export default function AdminUsersPage() {
                   onChange={(e) => setFormData({ ...formData, role: e.target.value })}
                   className="gov-input"
                 >
+                  <option value="reviewer">Reviewer (Department Faculty / HoD)</option>
                   <option value="admin">College Administrator</option>
                   <option value="student">Student</option>
                 </select>
               </div>
 
-              <div>
-                <label className="block font-bold text-gray-700 mb-1">Initial Password</label>
-                <input
-                  type="password"
-                  required
-                  minLength={6}
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  placeholder="Temporary password"
-                  className="gov-input"
-                />
-              </div>
+              {formData.role === 'reviewer' && (
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">
+                    Assigned Department <span className="text-red-600">*</span>
+                  </label>
+                  <select
+                    required
+                    value={formData.department}
+                    onChange={(e) => setFormData({ ...formData, department: e.target.value })}
+                    className="gov-input"
+                  >
+                    <option value="">-- Select Controlled Department --</option>
+                    {SIT_DEPARTMENTS.map((d) => (
+                      <option key={d.code} value={d.code}>
+                        {d.name} ({d.code})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    Reviewers can strictly access applications matching this specific department.
+                  </p>
+                </div>
+              )}
+
+              {formData.role === 'student' ? (
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">Initial Password</label>
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    placeholder="Temporary password"
+                    className="gov-input"
+                  />
+                </div>
+              ) : (
+                <div className="bg-blue-50 border border-blue-200 p-2.5 text-[11px] text-blue-900 leading-relaxed">
+                  <strong>Invite-by-Email:</strong> An invitation link will be sent to the staff member via Supabase Auth so they can choose their own secure password directly.
+                </div>
+              )}
 
               <div className="flex gap-2 pt-3">
                 <button
@@ -254,7 +287,7 @@ export default function AdminUsersPage() {
                   type="submit"
                   className="gov-btn gov-btn-primary text-xs flex-1 font-bold"
                 >
-                  Create Account
+                  {formData.role === 'student' ? 'Create Account' : 'Send Staff Invitation'}
                 </button>
               </div>
             </form>

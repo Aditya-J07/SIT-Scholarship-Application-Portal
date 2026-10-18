@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireAdminOrReviewer, canReviewerAccessDepartment } from '@/lib/auth/admin-guard';
+import { normalizeDepartment } from '@/lib/constants/departments';
 import { db } from '@/lib/db';
 import { maskBankAccount } from '@/lib/crypto/field-encryption';
 
@@ -20,17 +21,30 @@ export async function GET(request: Request) {
   const hardCopy = searchParams.get('hardCopy');
   const sortBy = searchParams.get('sortBy') || 'merit'; // 'merit', 'income', 'date', 'ref_no'
   const sortOrder = searchParams.get('order') || 'desc';
+  const departmentFilter = searchParams.get('department') || '';
   const page = Math.max(1, Number(searchParams.get('page') || 1));
   const pageSize = Math.max(1, Number(searchParams.get('pageSize') || 25));
 
   let apps = await db.listApplications();
 
-  // Reviewer Department Scoping (Item 5)
+  if (departmentFilter) {
+    const normFilter = normalizeDepartment(departmentFilter);
+    apps = apps.filter((a) => {
+      const appDept = a.department || normalizeDepartment(a.data?.course) || a.data?.department;
+      return appDept === normFilter;
+    });
+  }
+
+  // Reviewer Department Scoping (Phase 3c Item 4: deny by default)
   if (session.role === 'reviewer') {
     const reviewer = await db.findUserById(session.userId);
-    if (reviewer?.department) {
-      apps = apps.filter((a) => canReviewerAccessDepartment(reviewer.department, a.data.course));
+    if (!reviewer?.department || !reviewer.department.trim()) {
+      return NextResponse.json(
+        { error: { message: 'Forbidden: No department assigned to reviewer account' } },
+        { status: 403 }
+      );
     }
+    apps = apps.filter((a) => canReviewerAccessDepartment(reviewer.department, a.data.course || a.data.department || a.department));
   }
 
   // Compute server-side duplicate flags per cycle (Item 2)

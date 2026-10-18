@@ -32,8 +32,8 @@ function mapProfileFromDb(row: Record<string, unknown>): UserProfile {
   const last4 = row.bank_acc_last4
     ? String(row.bank_acc_last4)
     : plainBankAcc
-    ? getBankAccLast4(plainBankAcc)
-    : undefined;
+      ? getBankAccLast4(plainBankAcc)
+      : undefined;
 
   return {
     id: String(row.id),
@@ -530,7 +530,7 @@ export const db = {
     updates: Partial<ApplicationRecord>
   ): Promise<ApplicationRecord | null> => {
     const supabase = getAdminClient();
-    const updatePayload = {
+    const updatePayload: Record<string, unknown> = {
       ...updates,
       status: "submitted",
       submitted_at: new Date().toISOString(),
@@ -546,6 +546,21 @@ export const db = {
       .maybeSingle();
 
     if (error) {
+      if ((error.code === "PGRST204" || error.code === "42703" || error.message?.includes("department")) && "department" in updatePayload) {
+        delete updatePayload.department;
+        const retryRes = await supabase
+          .from("applications")
+          .update(updatePayload)
+          .eq("id", id)
+          .in("status", ["draft", "needs_correction"])
+          .select("*")
+          .maybeSingle();
+        if (retryRes.error) {
+          console.error("[DB] submitApplication retry error:", retryRes.error.message);
+          throw retryRes.error;
+        }
+        return (retryRes.data as ApplicationRecord) || null;
+      }
       console.error("[DB] submitApplication error:", error.message);
       throw error;
     }

@@ -32,7 +32,8 @@ export async function GET(
   // Reviewer department scoping: reviewer can only view applications matching their department
   if (session.role === 'reviewer') {
     const reviewer = await db.findUserById(session.userId);
-    if (!canReviewerAccessDepartment(reviewer?.department, application.data?.course)) {
+    const appDept = application.department || application.data?.department || application.data?.course;
+    if (!canReviewerAccessDepartment(reviewer?.department, appDept)) {
       return NextResponse.json(
         { error: { message: 'Forbidden: application outside reviewer department' } },
         { status: 403 }

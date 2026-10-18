@@ -1,17 +1,7 @@
-export const SIT_COURSES = [
-  'Computer Science and Engineering',
-  'Information Science and Engineering',
-  'Artificial Intelligence and Data Science',
-  'Electronics and Communication Engineering',
-  'Electrical and Electronics Engineering',
-  'Mechanical Engineering',
-  'Civil Engineering',
-  'Electronics and Instrumentation Engineering',
-  'Chemical Engineering',
-  'Biotechnology',
-  'Master of Computer Applications (MCA)',
-  'Master of Business Administration (MBA)',
-] as const;
+export * from './constants/departments';
+import { SIT_DEPARTMENTS } from './constants/departments';
+
+export const SIT_COURSES = SIT_DEPARTMENTS.map((d) => d.name);
 
 export const ENCLOSURES_METADATA = [
   {

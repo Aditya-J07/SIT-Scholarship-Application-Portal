@@ -99,6 +99,7 @@ export interface ApplicationFormData {
   marks_gross_total: number;
   percentage?: number; // computed
   course: string; // "CSE", "ECE", "ISE", etc.
+  department?: string; // normalized department code e.g. "ME", "CSE"
   year_of_study: number; // 1 to 4
   semester: number; // 1 to 8
   cgpa?: number | null; // for years 2-4
@@ -211,6 +212,7 @@ export interface ApplicationRecord {
   hard_copy_received: boolean;
   hard_copy_received_at?: string;
   bank_acc_hash?: string;
+  department?: string;
   recommendation_status?: 'pending' | 'recommended' | 'not_recommended';
   recommendation_note?: string;
   created_at: string;

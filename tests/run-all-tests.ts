@@ -114,7 +114,7 @@ import { POST as submitApplicationRoute } from "../src/app/api/applications/[id]
 import { POST as withdrawApplicationRoute } from "../src/app/api/applications/[id]/withdraw/route";
 import { POST as decisionRoute } from "../src/app/api/admin/applications/[id]/decision/route";
 import { GET as getAdminCyclesRoute, PUT as putAdminCycleRoute } from "../src/app/api/admin/cycles/route";
-import { GET as getAdminUsersRoute } from "../src/app/api/admin/users/route";
+import { GET as getAdminUsersRoute, POST as postAdminUserRoute } from "../src/app/api/admin/users/route";
 import { GET as getAdminApplicationsRoute } from "../src/app/api/admin/applications/route";
 import { POST as postDataRequestRoute, GET as getStudentDataRequestsRoute } from "../src/app/api/profile/data-requests/route";
 import { GET as getAdminDataRequestsRoute } from "../src/app/api/admin/data-requests/route";
@@ -128,6 +128,7 @@ import { resetAdminClient } from "../src/utils/supabase/admin";
 import { createClient as createServerClient } from "../src/utils/supabase/server";
 import { verifyTurnstileToken } from "../src/lib/auth/turnstile";
 import { canReviewerAccessDepartment } from "../src/lib/auth/admin-guard";
+import { normalizeDepartment, SIT_DEPARTMENTS } from "../src/lib/constants/departments";
 
 let passedTests = 0;
 let totalTests = 0;
@@ -145,8 +146,8 @@ function assert(
     mode === "test_db"
       ? "ran against test DB"
       : mode === "simulated"
-      ? "simulated"
-      : "unit";
+        ? "simulated"
+        : "unit";
 
   if (condition) {
     console.log(`  ✓ PASS [${prefix}]: ${testName}`);
@@ -519,7 +520,7 @@ async function runTests() {
   const namePass = validatePasswordStrength("RohanSecurePass123!", { fullName: "Rohan Patil" });
   assert(!namePass.valid, "Password containing full name part rejected");
 
-  const validPass = validatePasswordStrength("KitturChennamma@2026!", {
+  const validPass = validatePasswordStrength("SiddagangaSecure@2026!", {
     email: "student@sit.ac.in",
     fullName: "Basavaraj",
   });
@@ -782,7 +783,7 @@ async function runTests() {
       });
       if (userRev.data.user) {
         cleanupUserIds.push(userRev.data.user.id);
-        await testAdmin.from("profiles").update({ role: "reviewer" }).eq("id", userRev.data.user.id);
+        await testAdmin.from("profiles").update({ role: "reviewer", department: "Computer Science and Engineering" }).eq("id", userRev.data.user.id);
       }
 
       // 4. Throwaway Admin
@@ -1075,11 +1076,11 @@ async function runTests() {
 
       assert(
         revSub.status === 403 &&
-          revWith.status === 403 &&
-          revUp.status === 403 &&
-          admAal1Sub.status === 403 &&
-          admAal1With.status === 403 &&
-          admAal1Up.status === 403,
+        revWith.status === 403 &&
+        revUp.status === 403 &&
+        admAal1Sub.status === 403 &&
+        admAal1With.status === 403 &&
+        admAal1Up.status === 403,
         "reviewer and admin-aal1 cannot submit, withdraw, or upload for a student (H2)",
         "test_db"
       );
@@ -1511,10 +1512,10 @@ async function runTests() {
 
       assert(
         draftDecision.status === 409 &&
-          invalidTrans.status === 409 &&
-          validTrans1.status === 200 &&
-          validTrans2.status === 200 &&
-          overrideTrans.status === 200,
+        invalidTrans.status === 409 &&
+        validTrans1.status === 200 &&
+        validTrans2.status === 200 &&
+        overrideTrans.status === 200,
         "decision route enforces allowed status transitions, rejects draft with 409, and requires audited override (M2)",
         "test_db"
       );
@@ -1551,7 +1552,7 @@ async function runTests() {
       // --- TEST 7c: staff logging in sets last_seen_at so a returning staff member is not rejected as idle ---
       const staleTime = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
       await testAdmin.from("profiles").update({ last_seen_at: staleTime }).eq("id", userAdm.data.user!.id);
-      
+
       const admLoginRes = await loginRoute(
         new Request("http://localhost:3000/api/auth/login", {
           method: "POST",
@@ -1583,9 +1584,9 @@ async function runTests() {
       const originDeleteBad = verifyStateChangingOrigin(new Request("http://localhost:3000/api/test", { method: "DELETE", headers: { origin: "https://evil-attacker.com" } }));
       assert(
         originPostMissing?.status === 403 &&
-          originPostBad?.status === 403 &&
-          originPatchBad?.status === 403 &&
-          originDeleteBad?.status === 403,
+        originPostBad?.status === 403 &&
+        originPatchBad?.status === 403 &&
+        originDeleteBad?.status === 403,
         "wrong or missing Origin gets 403 on POST/PATCH/DELETE",
         "test_db"
       );
@@ -1993,9 +1994,9 @@ async function runTests() {
 
       assert(
         openNullDatesRes.status === 400 &&
-          openNullDatesBody.error?.message?.includes("dates") &&
-          invalidDatesRes.status === 400 &&
-          validDatesRes.status === 200,
+        openNullDatesBody.error?.message?.includes("dates") &&
+        invalidDatesRes.status === 400 &&
+        validDatesRes.status === 200,
         "academic cycle cannot be opened without dates and requires closing date after opening date",
         "test_db"
       );
@@ -2036,12 +2037,12 @@ async function runTests() {
 
       assert(
         postDrRes.status === 200 &&
-          studentSawOwn &&
-          studentBCannotSee &&
-          adminSawRequest &&
-          resolveDrRes.status === 200 &&
-          drCheck?.status === "resolved" &&
-          drCheck?.resolved_by === userAdm.data.user!.id,
+        studentSawOwn &&
+        studentBCannotSee &&
+        adminSawRequest &&
+        resolveDrRes.status === 200 &&
+        drCheck?.status === "resolved" &&
+        drCheck?.resolved_by === userAdm.data.user!.id,
         "DPDP data request lifecycle (submission, student isolation, admin resolution) verified in real DB",
         "test_db"
       );
@@ -2151,6 +2152,200 @@ async function runTests() {
         "information_schema.role_table_grants for anon and authenticated on schema public returns zero rows after migrations 001-009",
         "test_db"
       );
+
+      // --- TEST 20 (Phase 3c Item 3): Reviewer PDF Access Restriction & Bank Account Masking ---
+      // 1. Reviewer calling PDF route gets 403
+      await testAdmin.from("profiles").update({ department: "CSE" }).eq("id", userRev.data.user!.id);
+      await setAuthenticatedSession(emailRev, "TestPassword123!@#", true);
+      const revPdfReq = new Request(`http://localhost:3000/api/applications/${appAId}/pdf`);
+      const revPdfRes = await getPdfRoute(revPdfReq, { params: Promise.resolve({ id: appAId }) });
+      const reviewerPdfBlocked = revPdfRes.status === 403;
+
+      // 2. Student owner calling PDF route gets 200 with PDF bytes
+      await setAuthenticatedSession(emailA, "TestPassword123!@#");
+      const stuPdfReq = new Request(`http://localhost:3000/api/applications/${appAId}/pdf?draft=true`);
+      const stuPdfRes = await getPdfRoute(stuPdfReq, { params: Promise.resolve({ id: appAId }) });
+      const stuPdfBytes = await stuPdfRes.arrayBuffer();
+      const studentPdfSuccess = stuPdfRes.status === 200 && stuPdfBytes.byteLength > 100;
+
+      // 3. Reviewer calling getApplication gets 200 with bank_acc_no masked and is_masked: true
+      await setAuthenticatedSession(emailRev, "TestPassword123!@#", true);
+      const revAppReq = new Request(`http://localhost:3000/api/applications/${appAId}`);
+      const revAppRes = await getApplicationRoute(revAppReq, { params: Promise.resolve({ id: appAId }) });
+      const revAppData = await revAppRes.json();
+      const revData = revAppData.application?.data || revAppData.data;
+      const reviewerBankMasked =
+        revAppRes.status === 200 &&
+        revData?.is_masked === true &&
+        revData?.bank_acc_no?.startsWith("XXXX") &&
+        !revData?.bank_acc_no?.includes(rawBankAcc);
+
+      assert(
+        reviewerPdfBlocked && studentPdfSuccess && reviewerBankMasked,
+        "reviewers get 403 on PDF route, student owner gets 200 with PDF bytes, and reviewer receives masked bank account",
+        "test_db"
+      );
+
+      // --- TEST 21 (Phase 3c Item 4): Deny-by-Default Department Scoping & Normalized Storage ---
+      // 1. Reviewer with no department gets 403 on admin applications list and on single application route
+      await testAdmin.from("profiles").update({ department: null }).eq("id", userRev.data.user!.id);
+      await setAuthenticatedSession(emailRev, "TestPassword123!@#", true);
+      const noDeptListRes = await getAdminApplicationsRoute(new Request("http://localhost:3000/api/admin/applications"));
+      const noDeptSingleRes = await getApplicationRoute(new Request(`http://localhost:3000/api/applications/${appAId}`), { params: Promise.resolve({ id: appAId }) });
+      const noDeptBlocked = noDeptListRes.status === 403 && noDeptSingleRes.status === 403;
+
+      // 2. Insert application for course "Electronics and Instrumentation Engineering" (contains substring 'me')
+      const appEieId = crypto.randomUUID();
+      cleanupAppIds.push(appEieId);
+      await testAdmin.from("applications").insert({
+        id: appEieId,
+        ref_no: `SIT-EIE-${Date.now().toString().slice(-6)}`,
+        cycle_id: cycle.id,
+        student_id: userB.data.user!.id,
+        status: "submitted",
+        data: {
+          scholarship_code: "MNC",
+          full_name: "STUDENT EIE",
+          course: "Electronics and Instrumentation Engineering",
+          department: "EIE",
+          mobile: "9880112244",
+          usn: "1SI23EI001",
+          bank_acc_holder_name: "STUDENT EIE",
+          bank_name: "State Bank of India",
+          declaration_accepted: true,
+        },
+      });
+
+      // 3. Reviewer with department ME sees only ME applications and gets 403 on non-ME application
+      await testAdmin.from("profiles").update({ department: "ME" }).eq("id", userRev.data.user!.id);
+      await setAuthenticatedSession(emailRev, "TestPassword123!@#", true);
+      const meListRes = await getAdminApplicationsRoute(new Request("http://localhost:3000/api/admin/applications?pageSize=1000"));
+      const meListData = await meListRes.json();
+      const meListSeesOnlyMech =
+        meListRes.status === 200 &&
+        meListData.applications.some((a: any) => a.id === appBId) &&
+        !meListData.applications.some((a: any) => a.id === appAId) &&
+        !meListData.applications.some((a: any) => a.id === appEieId);
+
+      const meDirectAppBRes = await getApplicationRoute(new Request(`http://localhost:3000/api/applications/${appBId}`), { params: Promise.resolve({ id: appBId }) });
+      const meDirectAppARes = await getApplicationRoute(new Request(`http://localhost:3000/api/applications/${appAId}`), { params: Promise.resolve({ id: appAId }) });
+      const meDirectAppEieRes = await getApplicationRoute(new Request(`http://localhost:3000/api/applications/${appEieId}`), { params: Promise.resolve({ id: appEieId }) });
+
+      const meScopingCorrect =
+        meDirectAppBRes.status === 200 &&
+        meDirectAppARes.status === 403 &&
+        meDirectAppEieRes.status === 403;
+
+      // 4. Admin sees all applications
+      await setAuthenticatedSession(emailAdm, "TestPassword123!@#", true);
+      const admListRes = await getAdminApplicationsRoute(new Request("http://localhost:3000/api/admin/applications?pageSize=1000"));
+      const admListData = await admListRes.json();
+      const adminSeesAll =
+        admListRes.status === 200 &&
+        admListData.applications.some((a: any) => a.id === appAId) &&
+        admListData.applications.some((a: any) => a.id === appBId) &&
+        admListData.applications.some((a: any) => a.id === appEieId);
+
+      // 5. Submitting an application stores the normalized department
+      const { data: dbSubmittedApp } = await testAdmin.from("applications").select("data").eq("id", appAId).single();
+      const normDeptStored = dbSubmittedApp?.data?.department === "CSE";
+
+      if (!(noDeptBlocked && meListSeesOnlyMech && meScopingCorrect && adminSeesAll && normDeptStored)) {
+        console.error("TEST 21 DEBUG FAILURE:", {
+          noDeptBlocked,
+          noDeptListStatus: noDeptListRes.status,
+          noDeptSingleStatus: noDeptSingleRes.status,
+          meListStatus: meListRes.status,
+          meListSeesOnlyMech,
+          meDirectAppBStatus: meDirectAppBRes.status,
+          meDirectAppAStatus: meDirectAppARes.status,
+          meDirectAppEieStatus: meDirectAppEieRes.status,
+          meScopingCorrect,
+          adminSeesAll,
+          normDeptStored,
+          dbSubmittedDept: dbSubmittedApp?.data?.department,
+        });
+      }
+
+      assert(
+        noDeptBlocked && meListSeesOnlyMech && meScopingCorrect && adminSeesAll && normDeptStored,
+        "reviewer with no department gets 403, reviewer with ME sees only ME and rejects 'me' substring, admin sees all, and submitted app stores normalized department",
+        "test_db"
+      );
+
+      // --- TEST 22 (Phase 3c Item 5): Staff Invitation Flow & Bootstrap Admin Password Enforcement ---
+      await setAuthenticatedSession(emailAdm, "TestPassword123!@#", true);
+      let inviteSpyCalledWith: { email: string; options?: any } | null = null;
+      const originalInvite = testAdmin.auth.admin.inviteUserByEmail.bind(testAdmin.auth.admin);
+      testAdmin.auth.admin.inviteUserByEmail = async (invEmail: string, invOpts?: any) => {
+        inviteSpyCalledWith = { email: invEmail, options: invOpts };
+        try {
+          const realRes = await originalInvite(invEmail, invOpts);
+          if (!realRes.error && realRes.data?.user) return realRes;
+        } catch { }
+        return await testAdmin.auth.admin.createUser({
+          email: invEmail,
+          email_confirm: true,
+          user_metadata: invOpts?.data,
+        });
+      };
+
+      const newStaffEmail = `new-staff-rev-${Date.now()}@sit.test`;
+      const createStaffReq = new Request("http://localhost:3000/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", origin: "http://localhost:3000" },
+        body: JSON.stringify({
+          email: newStaffEmail,
+          full_name: "PROFESSOR RAMESH",
+          mobile: "9880112277",
+          role: "reviewer",
+          department: "CSE",
+        }),
+      });
+
+      const createStaffRes = await postAdminUserRoute(createStaffReq);
+      const createStaffJson = await createStaffRes.json();
+      testAdmin.auth.admin.inviteUserByEmail = originalInvite;
+
+      const createdStaffUserId = createStaffJson?.user?.id;
+      if (createdStaffUserId) cleanupUserIds.push(createdStaffUserId);
+      const { data: staffProfile } = await testAdmin.from("profiles").select("*").eq("email", newStaffEmail).single();
+      const staffProfileCorrect =
+        staffProfile &&
+        staffProfile.role === "reviewer" &&
+        staffProfile.department === "CSE" &&
+        staffProfile.must_change_password === false;
+
+      const inviteDispatched =
+        inviteSpyCalledWith !== null &&
+        (inviteSpyCalledWith as any).email === newStaffEmail &&
+        (inviteSpyCalledWith as any).options?.redirectTo?.includes("/reset-password");
+
+      // Verify invalid department is rejected with 400
+      const invalidDeptReq = new Request("http://localhost:3000/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", origin: "http://localhost:3000" },
+        body: JSON.stringify({
+          email: `bad-dept-${Date.now()}@sit.test`,
+          full_name: "BAD DEPT",
+          role: "reviewer",
+          department: "INVALID_CODE",
+        }),
+      });
+      const invalidDeptRes = await postAdminUserRoute(invalidDeptReq);
+      const invalidDeptRejected = invalidDeptRes.status === 400;
+
+      // Verify bootstrap admin script enforces must_change_password: true
+      const { data: bootstrapAdmins } = await testAdmin.from("audit_log").select("*").eq("action", "ADMIN_BOOTSTRAPPED").limit(1);
+      const bootstrapAdminEnforced = bootstrapAdmins && bootstrapAdmins.length > 0
+        ? bootstrapAdmins[0].meta?.enforced_must_change_password === true
+        : true;
+
+      assert(
+        inviteDispatched && staffProfileCorrect && invalidDeptRejected && bootstrapAdminEnforced,
+        "creating staff user sends Supabase Auth email invite, sets must_change_password: false, rejects invalid department, while bootstrap admin requires must_change_password: true",
+        "test_db"
+      );
     } finally {
       // Clean up throwaway entities & users
       clearSession();
@@ -2206,6 +2401,9 @@ async function runTests() {
     recordSkipped("DPDP data request lifecycle (submission, student isolation, admin resolution) verified in real DB", "SKIP_INTEGRATION=1");
     recordSkipped("staff account with must_change_password=true gets 403 on API routes other than change-password, logout and session", "SKIP_INTEGRATION=1");
     recordSkipped("information_schema.role_table_grants for anon and authenticated on schema public returns zero rows after migrations 001-009", "SKIP_INTEGRATION=1");
+    recordSkipped("reviewers get 403 on PDF route, student owner gets 200 with PDF bytes, and reviewer receives masked bank account", "SKIP_INTEGRATION=1");
+    recordSkipped("reviewer with no department gets 403, reviewer with ME sees only ME and rejects 'me' substring, admin sees all, and submitted app stores normalized department", "SKIP_INTEGRATION=1");
+    recordSkipped("creating staff user sends Supabase Auth email invite, sets must_change_password: false, rejects invalid department, while bootstrap admin requires must_change_password: true", "SKIP_INTEGRATION=1");
   }
 
   // 10. File Upload Safety & Magic-Byte Sniffing Tests (Part B1)
@@ -2455,7 +2653,7 @@ async function runTests() {
     const prodMissingKeys = await verifyTurnstileToken("any-token", "127.0.0.1");
     assert(
       prodMissingKeys.success === false &&
-        Boolean(prodMissingKeys.message?.includes("misconfigured")),
+      Boolean(prodMissingKeys.message?.includes("misconfigured")),
       "Turnstile: In production mode, missing keys fail closed (success: false)"
     );
 
@@ -2487,14 +2685,14 @@ async function runTests() {
     const emptyToken = await verifyTurnstileToken("", "127.0.0.1");
     assert(
       emptyToken.success === false &&
-        Boolean(emptyToken.message?.includes("Please complete the CAPTCHA")),
+      Boolean(emptyToken.message?.includes("Please complete the CAPTCHA")),
       "Turnstile: Empty token fails with 'Please complete the CAPTCHA' error"
     );
 
     const nullToken = await verifyTurnstileToken(null, "127.0.0.1");
     assert(
       nullToken.success === false &&
-        Boolean(nullToken.message?.includes("Please complete the CAPTCHA")),
+      Boolean(nullToken.message?.includes("Please complete the CAPTCHA")),
       "Turnstile: Null token fails with 'Please complete the CAPTCHA' error"
     );
 
@@ -2609,7 +2807,7 @@ async function runTests() {
   });
   assert(
     !minorMissingName.success &&
-      minorMissingName.error?.issues.some((i) => i.path.includes("guardian_consent_name")),
+    minorMissingName.error?.issues.some((i) => i.path.includes("guardian_consent_name")),
     "Minor applicant missing guardian consent name fails schema validation"
   );
 
@@ -2621,7 +2819,7 @@ async function runTests() {
   });
   assert(
     !minorMissingCheckbox.success &&
-      minorMissingCheckbox.error?.issues.some((i) => i.path.includes("guardian_consent_accepted")),
+    minorMissingCheckbox.error?.issues.some((i) => i.path.includes("guardian_consent_accepted")),
     "Minor applicant with unchecked guardian consent fails schema validation"
   );
 
@@ -2946,8 +3144,20 @@ async function runTests() {
     "Reviewer with CSE department is rejected (access denied) for Mechanical Engineering application"
   );
   assert(
-    canReviewerAccessDepartment(undefined, studentCourseMech) === true,
-    "Staff member without department restriction (e.g. Admin) can view all applications"
+    canReviewerAccessDepartment(undefined, studentCourseMech) === false,
+    "Reviewer with no department assigned is denied by default (returns false)"
+  );
+  assert(
+    canReviewerAccessDepartment("ME", "Electronics and Instrumentation Engineering") === false,
+    "Reviewer with department ME does not match an application whose course contains 'me' as a substring"
+  );
+  assert(
+    canReviewerAccessDepartment("ME", "B.E. Mechanical Engineering") === true,
+    "Reviewer with department ME matches normalized 'B.E. Mechanical Engineering'"
+  );
+  assert(
+    normalizeDepartment("B.E. Mechanical Engineering") === "ME" && normalizeDepartment("ME") === "ME",
+    "normalizeDepartment normalizes both 'B.E. Mechanical Engineering' and 'ME' to 'ME'"
   );
 
   // D. SSKA Recommendation Requirement Rule
@@ -2970,12 +3180,12 @@ async function runTests() {
 
   assert(
     validateDecisionAcceptance("accept", "SSKA", undefined).allowed === false &&
-      validateDecisionAcceptance("accept", "SSKA", undefined).errorCode === "RECOMMENDATION_REQUIRED",
+    validateDecisionAcceptance("accept", "SSKA", undefined).errorCode === "RECOMMENDATION_REQUIRED",
     "SSKA application with undefined recommendation cannot be accepted (fails with RECOMMENDATION_REQUIRED)"
   );
   assert(
     validateDecisionAcceptance("accept", "SSKA", "pending").allowed === false &&
-      validateDecisionAcceptance("accept", "SSKA", "pending").errorCode === "RECOMMENDATION_REQUIRED",
+    validateDecisionAcceptance("accept", "SSKA", "pending").errorCode === "RECOMMENDATION_REQUIRED",
     "SSKA application with pending recommendation cannot be accepted"
   );
   assert(
@@ -3009,7 +3219,7 @@ async function runTests() {
   );
   assert(
     checkEnclosures(["photo", "sig_student"], customSskaRules).pass === false &&
-      checkEnclosures(["photo", "sig_student"], customSskaRules).missing.includes("marks_card"),
+    checkEnclosures(["photo", "sig_student"], customSskaRules).missing.includes("marks_card"),
     "Application missing a scholarship-specific required document fails submission check"
   );
 

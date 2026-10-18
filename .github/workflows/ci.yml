@@ -56,7 +56,6 @@ jobs:
     name: Real Database Integration Tests
     needs: build-and-unit-tests
     runs-on: ubuntu-latest
-    if: "${{ secrets.TEST_SUPABASE_URL != '' && secrets.TEST_SUPABASE_PUBLISHABLE_KEY != '' && secrets.TEST_SUPABASE_SECRET_KEY != '' }}"
     env:
       TEST_SUPABASE_URL: ${{ secrets.TEST_SUPABASE_URL }}
       TEST_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.TEST_SUPABASE_PUBLISHABLE_KEY }}
@@ -79,5 +78,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check for Test Database Secrets
+        id: check-secrets
+        run: |
+          if [ -z "$TEST_SUPABASE_URL" ] || [ -z "$TEST_SUPABASE_SECRET_KEY" ]; then
+            echo "::notice ::Test database secrets (TEST_SUPABASE_URL, TEST_SUPABASE_SECRET_KEY) are not configured. Skipping integration tests."
+            echo "has_secrets=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_secrets=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Run Integration Tests against Test Database
+        if: steps.check-secrets.outputs.has_secrets == 'true'
         run: npm test

@@ -58,24 +58,36 @@ export async function requireAdminOrReviewer(): Promise<
 > {
   return requireAdminSession({ allowReviewer: true, requireAal2: true });
 }
+import { normalizeDepartment } from '@/lib/constants/departments';
 
 /**
  * Evaluates whether a reviewer with an assigned department has permission to access
  * an application based on the student's enrolled course / branch.
- * If reviewerDept is unset, unrestricted access is granted (e.g. for general staff / admins).
+ *
+ * Rules (Phase 3c Item 4):
+ * - Deny-by-default: If reviewer has no department assigned (null/undefined/empty), access is DENIED (false).
+ * - Exact matching: Both reviewer department and application department/course are normalized to canonical codes.
+ * - Access is granted ONLY if normalizeDepartment(reviewerDept) === normalizeDepartment(studentCourse).
+ *   (e.g., "ME" matches only "Mechanical Engineering" / "ME", never "Civil Engineering" or other courses).
  */
-export function canReviewerAccessDepartment(reviewerDept?: string, studentCourse?: string): boolean {
-  if (!reviewerDept || !reviewerDept.trim()) return true;
-  const sCourse = (studentCourse || '').trim().toLowerCase();
-  const rDept = reviewerDept.trim().toLowerCase();
-  if (!sCourse) return false;
-  if (sCourse.includes(rDept) || rDept.includes(sCourse)) return true;
-
-  // Filter significant keywords (length >= 3, excluding generic academic terms)
-  const stopWords = new Set(['and', '&', 'of', 'in', 'the', 'engineering', 'department', 'dept', 'b.e.', 'be', 'btech', 'mtech']);
-  const deptKeywords = rDept.split(/[\s,./\-_]+/).filter((w) => w.length >= 3 && !stopWords.has(w));
-  if (deptKeywords.length > 0 && deptKeywords.every((kw) => sCourse.includes(kw))) {
-    return true;
+export function canReviewerAccessDepartment(reviewerDept?: string | null, studentCourse?: string | null): boolean {
+  if (!reviewerDept || !reviewerDept.trim()) {
+    // Deny-by-default: unassigned reviewers see nothing
+    return false;
   }
-  return false;
+
+  const normReviewer = normalizeDepartment(reviewerDept);
+  if (!normReviewer) {
+    // Unrecognized reviewer department fails closed
+    return false;
+  }
+
+  const normCourse = normalizeDepartment(studentCourse);
+  if (!normCourse) {
+    // Application with unmapped or empty course fails closed
+    return false;
+  }
+
+  // Exact matching against controlled canonical codes
+  return normReviewer === normCourse;
 }

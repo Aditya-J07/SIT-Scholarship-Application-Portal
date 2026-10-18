@@ -6,7 +6,7 @@
  * for academic cycles exceeding the configured institutional retention period.
  *
  * Requirements:
- * - Configurable RETENTION_YEARS (default: 7 years)
+ * - Configurable RETENTION_YEARS environment variable (no default; requires explicit setting).
  *   TODO [COLLEGE DECISION REQUIRED]: Confirm institutional data retention period with Governing Body.
  * - Dry-run mode by default (prints counts only; requires --execute flag to modify data).
  * - ZERO PII in output: prints record counts only.

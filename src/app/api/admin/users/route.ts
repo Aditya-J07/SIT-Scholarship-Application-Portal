@@ -1,46 +1,39 @@
 import { NextResponse } from "next/server";
-import { getAdminClient } from "@/utils/supabase/admin";
-import { db } from "@/lib/db";
-import { validatePasswordStrength } from "@/lib/auth/password-policy";
-import { UserRole } from "@/lib/types";
 import { requireAdminSession } from "@/lib/auth/admin-guard";
-import { verifyStateChangingOrigin } from "@/lib/auth/origin-guard";
+import { db } from "@/lib/db";
+import { getAdminClient } from "@/utils/supabase/admin";
 import { getClientIp } from "@/lib/rate-limit";
+import { normalizeDepartment } from "@/lib/constants/departments";
 
-const ALLOWED_ROLES = new Set<UserRole>(["student", "reviewer", "admin"]);
+const ALLOWED_ROLES = new Set(["student", "reviewer", "admin"]);
 
 export async function GET(_request?: Request) {
-  const { errorResponse } = await requireAdminSession({ allowReviewer: false });
+  const { errorResponse } = await requireAdminSession({ allowReviewer: false, requireAal2: true });
   if (errorResponse) return errorResponse;
 
-  const usersList = await db.listUsers();
-  const users = usersList.map((u) => ({
-    id: u.id,
-    full_name: u.full_name,
-    email: u.email,
-    mobile: u.mobile,
-    role: u.role,
-    must_change_password: Boolean(u.must_change_password),
-    created_at: u.created_at,
-  }));
-
-  return NextResponse.json({ users });
+  try {
+    const users = await db.listUsers();
+    return NextResponse.json({ users });
+  } catch (err: unknown) {
+    console.error("List users error:", err);
+    return NextResponse.json(
+      { error: { message: "Internal server error" } },
+      { status: 500 }
+    );
+  }
 }
 
 export async function POST(request: Request) {
-  const originErr = verifyStateChangingOrigin(request);
-  if (originErr) return originErr;
-
-  const { session, errorResponse } = await requireAdminSession({ allowReviewer: false });
+  const { session, errorResponse } = await requireAdminSession({ allowReviewer: false, requireAal2: true });
   if (errorResponse) return errorResponse;
 
   try {
     const body = await request.json();
-    const { full_name, email, mobile, password, role } = body;
+    const { full_name, email, mobile, role, department } = body;
 
-    if (!full_name || !email || !password || !role) {
+    if (!full_name || !email || !role) {
       return NextResponse.json(
-        { error: { message: "All fields are required" } },
+        { error: { message: "Full name, email, and role are required" } },
         { status: 400 }
       );
     }
@@ -54,15 +47,6 @@ export async function POST(request: Request) {
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    // Enforce institutional password policy
-    const policyResult = validatePasswordStrength(password, {
-      email: normalizedEmail,
-      fullName: full_name,
-    });
-    if (!policyResult.valid) {
-      return NextResponse.json({ error: { message: policyResult.error } }, { status: 400 });
-    }
-
     // Check if user already exists
     const existing = await db.findUserByEmail(normalizedEmail);
     if (existing) {
@@ -72,30 +56,83 @@ export async function POST(request: Request) {
       );
     }
 
-    // Use Supabase Admin Auth API to create confirmed user
+    let normDept: string | null = null;
+    if (role === "reviewer") {
+      if (!department) {
+        return NextResponse.json(
+          { error: { message: "Department is required for reviewer accounts" } },
+          { status: 400 }
+        );
+      }
+      normDept = normalizeDepartment(department);
+      if (!normDept) {
+        return NextResponse.json(
+          { error: { message: "Invalid department. Must be one of the recognized SIT departments." } },
+          { status: 400 }
+        );
+      }
+    }
+
     const adminSupabase = getAdminClient();
-    const { data: authData, error: createAuthError } =
-      await adminSupabase.auth.admin.createUser({
+    let authUserId: string;
+
+    // Phase 3c Item 5: Use Supabase inviteUserByEmail for staff accounts (admin, reviewer)
+    // so the person sets their own password.
+    if (role === "admin" || role === "reviewer") {
+      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+      const { data: authData, error: inviteError } = await adminSupabase.auth.admin.inviteUserByEmail(
+        normalizedEmail,
+        {
+          redirectTo: `${siteUrl}/reset-password`,
+          data: {
+            full_name: full_name.trim().toUpperCase(),
+            role,
+            department: normDept || undefined,
+          },
+        }
+      );
+
+      if (inviteError || !authData.user) {
+        return NextResponse.json(
+          { error: { message: inviteError?.message || "Failed to send staff invitation email" } },
+          { status: 400 }
+        );
+      }
+      authUserId = authData.user.id;
+    } else {
+      // Student accounts created with standard password
+      const password = body.password;
+      if (!password) {
+        return NextResponse.json(
+          { error: { message: "Password is required for student accounts" } },
+          { status: 400 }
+        );
+      }
+      const { data: authData, error: createAuthError } = await adminSupabase.auth.admin.createUser({
         email: normalizedEmail,
         password,
         email_confirm: true,
       });
 
-    if (createAuthError || !authData.user) {
-      return NextResponse.json(
-        { error: { message: createAuthError?.message || "Failed to create user account" } },
-        { status: 400 }
-      );
+      if (createAuthError || !authData.user) {
+        return NextResponse.json(
+          { error: { message: createAuthError?.message || "Failed to create user account" } },
+          { status: 400 }
+        );
+      }
+      authUserId = authData.user.id;
     }
 
     // Create profile in PostgreSQL profiles table
+    // must_change_password is kept ONLY for the bootstrap admin created by the script (Item 5)
     const newProfile = await db.createUser({
-      id: authData.user.id,
+      id: authUserId,
       role,
       full_name: full_name.trim().toUpperCase(),
       email: normalizedEmail,
       mobile: mobile?.trim() || "",
-      must_change_password: true, // Forces password change upon first staff login
+      department: normDept || undefined,
+      must_change_password: false,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
@@ -105,10 +142,15 @@ export async function POST(request: Request) {
     await db.logAudit({
       actor_id: session.userId,
       actor_email: session.email,
-      action: "USER_ACCOUNT_CREATED",
+      action: role === "student" ? "USER_ACCOUNT_CREATED" : "STAFF_INVITED_BY_EMAIL",
       entity: "profiles",
       entity_id: newProfile.id,
-      meta: { role: newProfile.role, email: newProfile.email, must_change_password: true },
+      meta: {
+        role: newProfile.role,
+        email: newProfile.email,
+        department: newProfile.department,
+        invited: role === "admin" || role === "reviewer",
+      },
       ip: clientIp,
     });
 
@@ -119,13 +161,13 @@ export async function POST(request: Request) {
         full_name: newProfile.full_name,
         email: newProfile.email,
         role: newProfile.role,
-        must_change_password: newProfile.must_change_password,
+        department: newProfile.department,
       },
     });
-  } catch (error: unknown) {
-    console.error("Admin create user error:", error);
+  } catch (err: unknown) {
+    console.error("Create/Invite user error:", err);
     return NextResponse.json(
-      { error: { message: "Failed to create user account" } },
+      { error: { message: "Internal server error" } },
       { status: 500 }
     );
   }

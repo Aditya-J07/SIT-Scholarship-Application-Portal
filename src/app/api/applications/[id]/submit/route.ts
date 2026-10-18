@@ -11,6 +11,7 @@ import { storage } from '@/lib/storage';
 import { ApplicationFormData, ApplicationFileRecord } from '@/lib/types';
 import { getClientIp } from '@/lib/rate-limit';
 import { decryptBankAccount, encryptBankAccount } from '@/lib/crypto/field-encryption';
+import { normalizeDepartment } from '@/lib/constants/departments';
 
 export async function POST(
   request: Request,
@@ -226,8 +227,10 @@ export async function POST(
     // 5. Update Application Record in DB with encrypted bank account (H1)
     const encBank = rawData.bank_acc_no_encrypted || encryptBankAccount(validatedData.bank_acc_no);
     const bankLast4 = validatedData.bank_acc_no.slice(-4);
+    const normalizedDept = normalizeDepartment(validatedData.course) || validatedData.course;
     const dataToSave = {
       ...validatedData,
+      department: normalizedDept,
       bank_acc_no_encrypted: encBank,
       bank_acc_last4: bankLast4,
     };
@@ -238,6 +241,7 @@ export async function POST(
       pdf_path: pdfFileName,
       pdf_sha256: sha256,
       merit_score,
+      department: normalizedDept,
       data: dataToSave,
       computed: {
         percentage: validatedData.percentage || 0,
