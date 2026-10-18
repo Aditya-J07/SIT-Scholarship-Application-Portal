@@ -6,187 +6,202 @@
 
 ## 1. Overview
 
-The **SIT Scholarship Application Portal** (`sit-scholarship-portal`) is the official, fast, minimal, government-style web platform for Siddaganga Institute of Technology, Tumakuru. It automates scholarship applications, eligibility verification, merit ranking, document archiving, and print-ready PDF generation while strictly safeguarding student privacy in compliance with the Digital Personal Data Protection (DPDP) Act 2023.
+The **SIT Scholarship Application Portal** (`sit-scholarship-portal`) is the official, fast, minimal, institutional web platform for Siddaganga Institute of Technology, Tumakuru. It automates scholarship applications, multi-factor authenticated scrutiny, merit ranking, document archiving, print-ready PDF generation, and bilingual notifications while strictly safeguarding student privacy in compliance with India's **Digital Personal Data Protection (DPDP) Act, 2023**.
 
 ### Supported Scholarships
 1. **`MNC`**: *Dr. M.N. Channabasappa Endowment Fund Loan Scholarship*
-   - Strict merit-cum-means selection for CET-admitted students.
+   - Merit-cum-means financial assistance for CET-admitted students.
    - Income ceiling: **Rs. 3,00,000/- per annum**.
    - Maximum other assistance: **30% of total annual fee**.
    - Years 2 to 4 requirement: **strictly zero backlog history**.
-   - Annual quota: **One student selected each for 1st, 2nd, 3rd, and 4th year B.E.** (Top 10 per year interviewed).
+   - Annual quota: **One student selected each for 1st, 2nd, 3rd, and 4th year B.E.** (Top 10 candidates per year shortlisted).
 2. **`SSKA`**: *Sri Sripathi K A Memorial Scholarship*
-   - Uses *"Tuition fee"* reference.
-   - Includes official Proctor and Head of the Department (HoD) recommendation verification block.
+   - Tuition fee scholarship for deserving engineering students.
+   - Includes mandatory Proctor and Head of the Department (HoD) recommendation validation.
 3. **`SITEB`**: *SIT Scholarship to Economically Backward and Socially Challenged Students*
-   - Configured in the data model and marked **inactive** pending official committee circular.
+   - Configured in the schema and marked inactive pending committee circular.
 
 ---
 
-## 2. Key Architecture & Security Controls
+## 2. Key Architecture & Security Defenses
 
-- **Authentication:** Powered by Supabase Auth (`@supabase/ssr` + `@supabase/supabase-js`). Session tokens are stored in secure HTTP-only cookies and refreshed via Next.js 16 request proxy (`src/proxy.ts`).
-- **Database-Controlled Authorization:** User roles (`student`, `reviewer`, `admin`) reside exclusively in PostgreSQL `public.profiles.role`. Roles are never stored in or read from JWT metadata or client cookies.
-- **PostgreSQL Row Level Security (RLS):** All tables have RLS enabled with access control policies.
-- **Append-Only Immutable Audit Log:** Trigger `trg_audit_log_immutable` raises an exception on any `UPDATE` or `DELETE`, and privileges are revoked from application roles.
-- **Database-Level Deadline Check:** Trigger `trg_check_application_submission_deadline` rejects status changes to `submitted` outside active cycle windows (`opens_at` to `closes_at`).
-- **Idempotent Submission & Concurrency Checks:** Draft saves check client `updated_at` timestamps (returning `409` on concurrent edit conflict). Submissions are conditional updates on `status IN ('draft', 'needs_correction')`.
-- **Field-Level Bank Account Encryption:** Student bank numbers are encrypted using **AES-256-GCM** (`v1:keyId:iv:tag:ciphertext`) via 32-byte base64 `ENCRYPTION_KEY`. Only the last 4 digits (`bank_acc_last4`) are stored unencrypted for masked display. Supports key rotation with `ENCRYPTION_KEY_PREVIOUS` and `scripts/rotate-encryption-key.ts`.
-- **Private Cloud Storage:** Application enclosures and generated PDFs are stored in private Supabase Storage bucket `application-files` (`public = false`). Files are served strictly through authenticated, role-checked route `/api/files/[id]`.
-- **Unlisted Staff Route:** The public "Administrator Login" link has been removed from the homepage. Staff authenticate via the unlisted `/admin-login` route.
-
----
-
-## 3. Set Up a New Supabase Project (Checklist)
-
-Follow this step-by-step checklist to configure a new Supabase project for the portal:
-
-### 1. Create Supabase Project
-- Log in to [Supabase Dashboard](https://supabase.com).
-- Click **New Project**.
-- Select Region: **`ap-south-1` (Mumbai, India)** — required for DPDP Act data residency compliance.
-- Note your Project URL, Publishable Key, and Secret Key (Service Role Key).
-
-### 2. Configure Authentication
-- In Supabase Dashboard, go to **Authentication → URL Configuration**:
-  - **Site URL:** Set to your production Vercel domain (e.g. `https://<your-project>.vercel.app`).
-  - **Redirect URLs:** Add `http://localhost:3000` (for local development) and `https://<your-project>.vercel.app/**`.
-- In **Authentication → Providers → Email**:
-  - Turn **Confirm email** ON (required before student login or submission).
-
-### 3. Run Database Migrations (Sequential Order)
-When initializing an empty Supabase project, execute the SQL migration scripts in numerical sequence in the Supabase **SQL Editor**:
-1. **`supabase/migrations/001_init.sql`**: Provisions core tables (`profiles`, `scholarships`, `cycles`, `applications`, `application_files`, `remarks`, `audit_log`, `rate_limits`), indexes, RLS policies, and immutable append-only audit log triggers.
-2. **`supabase/migrations/002_phase2.sql`**: Applies Phase 2 security hardening, including canonical status constraints, statement-level truncate prevention, `auth.users` profile generation trigger, atomic `rate_limit_hit` function, and the hardened submission deadline trigger.
-3. **`supabase/migrations/003_phase2c.sql`**: Adds `last_seen_at` column to `public.profiles` for server-side staff idle timeout and creates `cleanup_expired_rate_limits()` stored procedure for cron rate limit row purging.
-4. **`supabase/migrations/004_fix_cleanup.sql`**: Replaces `cleanup_expired_rate_limits()` to explicitly purge on `public.rate_limits(expire_at)`.
-5. **`supabase/migrations/005_lockdown.sql`**: Revokes all table and sequence grants from `anon` and `authenticated` roles to block direct PostgREST attacks, secures `rate_limit_hit` and `cleanup_expired_rate_limits` RPCs to `service_role`, and sets `search_path = ''`.
-6. **`supabase/migrations/006_consent.sql`**: Adds `consent_accepted_at` and `consent_version` to `public.profiles` for DPDP Act compliance, and alters `cycles.opens_at` and `closes_at` to allow nulls.
-
-> **Note on Migration Order:** Migration scripts must be executed in numerical sequence (`001` → `002` → `003` → `004` → `005` → `006`). For a fresh single-step setup, you may alternatively execute [`supabase/schema.sql`](supabase/schema.sql), which contains the consolidated idempotent schema.
-
-### 4. Seed Initial Data
-- Populate `.env.local` with your Supabase credentials (see section below).
-- Run the seed script to initialize scholarships, active cycle, and ensure bucket configuration:
-  ```bash
-  npx tsx scripts/seed.ts
-  ```
-
-### 5. Bootstrap Initial Administrator
-- Execute the bootstrap script using the interactive hidden prompt:
-  ```bash
-  npx tsx scripts/create-admin.ts
-  ```
-- The script will securely prompt for the administrator email and password (the password prompt mutes terminal output to prevent shoulder-surfing).
-- **Security Rule:** Passwords must **never** be passed on the command line or stored in shell history.
-- The script enforces the institutional password policy (minimum 10 characters, blocklist check, no name/email parts), creates the confirmed admin user in Supabase Auth, and marks `must_change_password = true`.
-- Upon initial login at `/admin-login`, the portal enforces an immediate password change at `/change-password`.
+- **Authentication & AAL2 MFA:** Powered by Supabase Auth (`@supabase/ssr`). Student sessions operate at AAL1; Reviewers and Administrators are strictly mandated to enforce Authenticator (TOTP) Multi-Factor Authentication at **Authenticator Assurance Level 2 (AAL2)**.
+- **Database-Controlled Authorization:** Roles (`student`, `reviewer`, `admin`) reside exclusively in PostgreSQL `public.profiles.role`. JWT metadata is never trusted for authorization decisions.
+- **Reviewer Department Scoping:** Faculty reviewers are scoped strictly to their assigned academic departments (`profiles.reviewer_departments`), preventing unauthorized cross-department scrutiny.
+- **Field-Level Encryption at Rest:** Student bank account numbers are encrypted using **AES-256-GCM** via 32-byte `ENCRYPTION_KEY`. Only the verified student owner and audited administrators can decrypt full account numbers.
+- **Zero-Decryption Duplicate Detection:** Bank account duplicates are identified using HMAC-SHA256 blind hashing (`bank_acc_hash`) with secret `HASH_KEY`. The portal detects duplicate bank claims without ever decrypting student account numbers.
+- **Strict Network & Browser Hardening:** Strict Content Security Policy (CSP), Cloudflare Turnstile CAPTCHA bot mitigation, atomic PostgreSQL rate limiting (`check_rate_limit`), and CSRF Origin validation on all state-changing requests.
+- **Tamper-Evident Document Sealing:** Generated PDF applications are stamped with a cryptographic **SHA-256 digest** verifiable publicly at `/verify/[ref_no]`.
+- **Zero-PII Logging Standard:** Application logs record event codes and non-identifying reference numbers only. Real student names, emails, phone numbers, and bank details are never printed to logs or console.
 
 ---
 
-## 3.1 Encryption Key Safety & Operational Procedures
+## 3. Technology Stack
 
-> [!CAUTION]
-> **CRITICAL DATA SAFETY NOTICE:** If `ENCRYPTION_KEY` is lost, corrupted, or deleted, **all bank account numbers encrypted in the database will be permanently unrecoverable**. 
-> The 32-byte base64 encryption key must be securely stored in an institutional password manager (such as 1Password or Bitwarden).
-> 
-> Key rotation is handled without service disruption via `scripts/rotate-encryption-key.ts` using `ENCRYPTION_KEY_PREVIOUS` and `ENCRYPTION_KEY`. See [`RUNBOOK.md`](RUNBOOK.md) for full operational recovery procedures.
+- **Framework:** Next.js 16.4 (App Router, Turbopack)
+- **Language:** TypeScript 5.x (Strict mode, zero `any` warnings)
+- **Database:** Supabase PostgreSQL 15+ (Row Level Security enforced)
+- **Storage:** Supabase Storage (Private encrypted buckets for uploads and PDFs)
+- **PDF Generation:** `pdf-lib` (Server-side generated official A4 documents)
+- **Email Delivery:** Direct campus/cloud SMTP via Nodemailer
+- **Testing:** Custom zero-dependency test runner with 250+ unit and real database integration tests
 
-## 4. Environment Variables
+---
 
-Create `.env.local` in the project root based on `.env.example`:
+## 4. Local Development Setup
 
-| Name | Scope | Description |
-|---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | Browser & Server | Supabase Project URL (`https://<project-ref>.supabase.co`) |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Browser & Server | Supabase Publishable Key (replaces old anon key) |
-| `SUPABASE_SECRET_KEY` | Server Only | Supabase Secret Key (bypasses RLS for server data layer) |
-| `ENCRYPTION_KEY` | Server Only | 32 random bytes, base64 encoded, for AES-256-GCM bank field encryption |
-| `ENCRYPTION_KEY_PREVIOUS` | Server Only | (Optional) Previous 32-byte base64 key during key rotation |
-| `NEXT_PUBLIC_APP_URL` | Browser & Server | Base URL of deployment (e.g. `http://localhost:3000` or production URL) |
-| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | CLI Only | Required only when running `scripts/create-admin.ts` |
-| `TEST_SUPABASE_URL` | Test Only | Separate test Supabase project URL (must NOT equal production URL unless local development guard is bypassed) |
-| `TEST_SUPABASE_PUBLISHABLE_KEY` | Test Only | Separate test Supabase publishable key |
-| `TEST_SUPABASE_SECRET_KEY` | Test Only | Separate test Supabase secret key |
-| `ALLOW_SAME_PROJECT_TEST` | Test Only | Set to 1 only while the single Supabase project holds no real data; remove before launch. Fails in `NODE_ENV=production`. |
-| `CRON_SECRET` | Server Only | Secret token securing `/api/cron/cleanup-rate-limits` daily invocation |
-| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Browser | Cloudflare Turnstile Site Key for CAPTCHA verification |
-| `TURNSTILE_SECRET_KEY` | Server Only | Cloudflare Turnstile Secret Key for server-side token validation |
+### Prerequisites
+- Node.js 20.x or higher
+- npm 10.x or higher
+- A Supabase project (AWS Mumbai region `ap-south-1` recommended)
 
-Generate a 32-byte base64 encryption key using Node.js:
+### 1. Clone & Install
 ```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+git clone https://github.com/Aditya-J07/SIT-Scholarship-Application-Portal.git
+cd SIT-Scholarship-Application-Portal
+npm install
 ```
 
----
+### 2. Environment Configuration
+Create a `.env.local` file in the root directory (refer to Section 5 below for full reference).
 
-## 5. Development & Testing
-
+### 3. Run Migrations & Seed
+Execute the SQL migrations in numerical order (`001` to `009`) in the Supabase SQL editor, or run the consolidated schema:
 ```bash
-# 1. Install dependencies
-npm install
+# Seed initial scholarships and closed test cycles
+npx tsx scripts/seed.ts
+```
 
-# 2. Run automated test suite
-# If TEST_SUPABASE_* variables are configured, integration tests execute against the test database.
-# In local development where test URL matches prod URL, pass ALLOW_SAME_PROJECT_TEST=1 (only while holding no real data; remove before launch):
-npm test                      # Requires TEST_SUPABASE_URL, TEST_SUPABASE_PUBLISHABLE_KEY, TEST_SUPABASE_SECRET_KEY
-SKIP_INTEGRATION=1 npm test   # Skips DB integration tests and runs all unit & simulated tests
+### 4. Create Local Administrator
+```bash
+npx tsx scripts/create-admin.ts
+```
+Enter an email and password when prompted.
 
-# 3. Run linter
-npm run lint
-
-# 4. Build production bundle
-npm run build
-
-# 5. Start development server
+### 5. Start Development Server
+```bash
 npm run dev
 ```
-
-The portal runs at **`http://localhost:3000`**.
-
----
-
-## 6. Route Sitemap
-
-### Public Routes
-- `/`: Home page (announcements, active scholarship list, deadlines, apply actions)
-- `/scholarships/[code]`: Guidelines and eligibility criteria for scholarships (`MNC`, `SSKA`)
-- `/login`: Student authentication portal
-- `/admin-login`: Unlisted staff and administrator authentication portal
-- `/register`: Student self-registration with DPDP Act consent
-- `/forgot-password`: Password reset request portal
-- `/change-password`: Enforced password change portal
-- `/verify/[ref_no]`: Public QR code verification endpoint
-
-### Student Portal (Authentication Required)
-- `/dashboard`: Applications overview, draft resumption, and PDF downloads
-- `/apply/[code]`: Multi-step form wizard with live eligibility checker and auto-save
-- `/applications/[id]`: Application detail view, status timeline, PDF viewer, remarks thread, withdrawal
-- `/profile`: Reusable profile and bank account details
-
-### Administrative Portal (Role Required)
-- `/admin`: Metrics dashboard, status counts, recent candidate submissions
-- `/admin/applications`: Scrutiny table with filters, search, and CSV/ZIP exports
-- `/admin/applications/[id]`: Candidate detail view, document previews, PDF preview, decision actions
-- `/admin/merit`: Merit ranking and Top 10 interview helper by academic year
-- `/admin/scholarships`: Scholarship rules and cycle windows editor
-- `/admin/users`: Reviewer and Administrator account management (invite only)
-- `/admin/audit`: Immutable compliance audit trail
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## 7. Proxy Lookups & Performance Notes
+## 5. Complete Environment Variables Table
 
-### How the Proxy Lookups Work
-1. **Next.js Session Request Proxy (`src/proxy.ts` / Middleware)**:
-   - Intercepts incoming requests to refresh Supabase Auth sessions transparently via HTTP-only cookie exchange using `@supabase/ssr`.
-   - Protects student and staff route trees (`/dashboard`, `/apply/*`, `/admin/*`) before request processing reaches page components or API handlers.
-2. **Server-Side IFSC Proxy Lookup (`/api/ifsc/[code]`)**:
-   - Proxies Indian Financial System Code (IFSC) queries securely to `https://ifsc.razorpay.com/` on behalf of authenticated students during bank account entry.
-   - Shields external endpoints and prevents browser CORS restrictions.
-   - Requires an authenticated user session, enforces IP-based rate limiting (30 requests/minute), and validates IFSC regex syntax (`/^[A-Z]{4}0[A-Z0-9]{6}$/`).
-   - Employs a bounded in-memory cache (up to 500 entries) and Next.js 24-hour fetch revalidation cache (`revalidate: 86400`) to maximize responsiveness and minimize external queries.
-   - Provides graceful fallback to manual bank and branch entry if the lookup service is unreachable.
+Configure these variables in `.env.local` for local development and in your hosting platform (Vercel) for production:
 
-### Performance & Page Speed
-- **TODO**: Measure production page speed, TTFB, and Core Web Vitals (LCP, INP, CLS) across desktop and mobile using Google PageSpeed Insights / Lighthouse and Vercel Speed Insights post-deployment.
+| Variable | Requirement | Description | Example / Default |
+| :--- | :---: | :--- | :--- |
+| `NEXT_PUBLIC_SITE_URL` | **Required** | Canonical site URL (used for origin guards & callbacks) | `http://localhost:3000` (Dev) / `https://scholarships.sit.ac.in` (Prod) |
+| `NEXT_PUBLIC_SUPABASE_URL` | **Required** | Supabase Project API URL | `https://xyzcompany.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | **Required** | Supabase Public Anonymous API Key | `eyJhbGciOi...` |
+| `SUPABASE_SERVICE_ROLE_KEY` | **Required** | Supabase Secret Service Role Key (Server-only) | `eyJhbGciOi...` |
+| `ENCRYPTION_KEY` | **Required** | 32-byte hex/base64 key for AES-256-GCM bank account encryption | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `HASH_KEY` | **Required** | 32-byte hex/base64 key for HMAC-SHA256 blind bank account hashing | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | **Required** | Cloudflare Turnstile Public Site Key | `1x00000000000000000000AA` (Dummy test key) |
+| `TURNSTILE_SECRET_KEY` | **Required** | Cloudflare Turnstile Secret Key | `1x0000000000000000000000000000000AA` (Dummy test key) |
+| `SMTP_HOST` | Optional | Outbound SMTP relay hostname | `smtp.office365.com` / `email-smtp.ap-south-1.amazonaws.com` |
+| `SMTP_PORT` | Optional | SMTP port (`587` for STARTTLS, `465` for SSL) | `587` |
+| `SMTP_SECURE` | Optional | `false` for port 587, `true` for port 465 | `false` |
+| `SMTP_USER` | Optional | SMTP authentication username / IAM user | `scholarships@sit.ac.in` |
+| `SMTP_PASS` | Optional | SMTP authentication password / App password | `********` |
+| `SMTP_FROM` | Optional | Sender header displayed to students | `SIT Scholarship Portal <scholarships@sit.ac.in>` |
+| `CRON_SECRET` | Optional | Bearer secret authorizing automated rate limit purge cron | `random-32-char-token` |
+| `REQUIRE_GUARDIAN_CONSENT_FOR_MINORS` | Optional | Enforces legal guardian consent for students under 18 | `true` |
+| `RETENTION_YEARS` | Optional | DPDP statutory retention window in years | `7` |
+
+---
+
+## 6. Chronological Database Migrations (001 to 009)
+
+When setting up or updating Supabase databases, apply migrations in strict chronological order:
+
+1. **`supabase/migrations/001_init.sql`**: Base schema (`profiles`, `scholarships`, `academic_cycles`, `applications`, `application_files`, `remarks`, `audit_logs`). Seeds scholarships and default closed cycles.
+2. **`supabase/migrations/002_phase2.sql`**: RLS security policies, role check constraints, and AAL2 session functions.
+3. **`supabase/migrations/003_phase2c.sql`**: Atomic database rate limiter table (`rate_limits`) and `check_rate_limit` stored procedure.
+4. **`supabase/migrations/004_fix_cleanup.sql`**: Security definer execution permissions for rate limit row cleanup.
+5. **`supabase/migrations/005_lockdown.sql`**: PostgREST lockdown, privilege revocation for anonymous/student roles on audit logs and status updates.
+6. **`supabase/migrations/006_consent.sql`**: Consent versioning columns (`consent_version`, `consent_at`) and cycle date constraint updates.
+7. **`supabase/migrations/007_duplicate_flags.sql`**: `bank_acc_hash` column, B-Tree index, and duplicate flag tracking.
+8. **`supabase/migrations/008_department.sql`**: `reviewer_departments` text array column on `profiles` for reviewer scoping.
+9. **`supabase/migrations/009_data_requests.sql`**: `data_requests` table for DPDP student data access, correction, and erasure requests.
+
+---
+
+## 7. User Guides
+
+### 7.1 Student User Guide
+1. **Registration & Login:** Register with an institutional email (`@sit.ac.in`). Confirm email via the verification link, then log in. Complete Turnstile CAPTCHA.
+2. **Applying for Scholarship:** From the homepage, select an open scholarship (e.g. MNC) and click **Apply Now**.
+3. **Multi-Step Wizard:**
+   - Step 1: Personal details & institutional identifiers. Minors (< 18 years) unlock the Guardian Consent Declaration block.
+   - Step 2: Parent / Guardian income details. Enter annual family income and certificate date.
+   - Step 3: Academic scores. Enter CET details, marks, and semester standing.
+   - Step 4: Fees, other assistance, and monthly requested amount.
+   - Step 5: Student's personal savings bank account number and IFSC code.
+   - Step 6: Document uploads. Upload passport photo, digital signatures, and enclosures. Images are automatically compressed to < 300 KB.
+   - Step 7: Review & Final Submit. Review all entered details, preview draft PDF, and submit.
+4. **Tracking & Timeline:** Track application status in real-time from `/dashboard` and `/applications/[id]`. If the committee requests changes, follow the prominent "Correction Requested" banner to update and resubmit.
+5. **Data Protection Rights:** Exercise DPDP rights (request data correction or account erasure) via `/profile`.
+
+### 7.2 Staff User Guide (Reviewers & Administrators)
+1. **Staff Login & Mandatory MFA:** Access the portal via `/admin-login`. Log in with staff credentials and complete TOTP MFA to achieve **AAL2 assurance**.
+2. **Reviewer Scrutiny:**
+   - Reviewers access applications scoped to their assigned academic departments.
+   - Review student marks, income proofs, and bank details (bank accounts are displayed in masked format `XXXX1234`).
+   - Add internal committee notes or issue correction requests directly to the student.
+   - Mark hard-copy physical documents as received.
+3. **Administrator Controls:**
+   - Full institutional scrutiny across all engineering departments.
+   - Decrypt student bank details when required for disbursement (strictly audited with IP and timestamp).
+   - Resolve duplicate flags (Duplicate Bank Account, Duplicate Mobile).
+   - Access **Merit Ranking View (`/admin/merit`)** to view Top 10 rankings per year and perform bulk shortlisting.
+   - Manage staff roles and execute MFA factor resets in `/admin/users`.
+   - Manage Academic Cycles (opening/closing deadlines) in `/admin/scholarships`.
+   - Review DPDP data correction and deletion requests in `/admin/data-requests`.
+   - Inspect append-only immutable logs in `/admin/audit`.
+
+---
+
+## 8. Running Tests
+
+The test suite contains 250+ unit and real database integration tests:
+
+```bash
+# Run complete test suite (unit tests + integration tests against test Supabase project)
+npm test
+
+# Run unit tests only in memory (no external database required)
+SKIP_INTEGRATION=1 npm test
+```
+
+### Pre-Commit Verification Sequence
+Before committing code changes, run the full verification sequence:
+```bash
+npm run lint         # ESLint (must exit with 0 errors and 0 warnings)
+npx tsc --noEmit     # TypeScript type check (strict mode)
+npm run build        # Production Next.js build
+npm test             # Full unit and integration test suite
+```
+
+---
+
+## 9. Comprehensive Documentation Suite
+
+For detailed technical references, refer to the documentation in [`docs/`](docs/):
+
+- [`SECURITY.md`](SECURITY.md) — Vulnerability reporting policy, security contacts, threat defenses, and cryptographic specifications.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — System architecture diagram, Mermaid data flows, role authorization matrix, and network layering.
+- [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — Operational SOPs, staff onboarding, MFA recovery, key rotation, cycle management, and disaster recovery.
+- [`docs/DPDP.md`](docs/DPDP.md) — Digital Personal Data Protection Act 2023 compliance breakdown, data inventory, minor consent rules, and retention policy.
+- [`docs/EMAIL.md`](docs/EMAIL.md) — Bilingual email templates, custom Supabase SMTP setup, SPF/DKIM DNS records, and zero-PII logging rules.
+- [`docs/MONITORING.md`](docs/MONITORING.md) — Observability strategy, rationale for omitting Sentry runtime SDK, client/server PII scrubbing filters, and health checks.
+- [`docs/LAUNCH_CHECKLIST.md`](docs/LAUNCH_CHECKLIST.md) — Step-by-step production go-live checklist for SIT Tumkur.
+
+---
+
+## 10. Known Limitations & Future Enhancements
+
+- **Direct Banking Gateway Integration:** Currently, scholarship award disbursements are processed by exporting verified bank data for institutional NEFT/RTGS batch processing. Direct integration with SBI or Canara Bank Corporate Payment APIs can be scheduled for future phases.
+- **Biometric Aadhaar e-KYC:** Student identity is currently verified via institutional email, USN validation, and uploaded Aadhaar copy (last-4 digits). Integration with UIDAI e-KYC can be evaluated if mandated by VTU or the Government of Karnataka.
+- **SMS Gateway Relay:** Notifications are delivered via institutional SMTP email. Integrating an institutional DLT-registered SMS gateway (CDAC or telecom provider) can provide parallel SMS alerts for critical deadlines.
