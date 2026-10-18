@@ -1754,9 +1754,14 @@ async function runTests() {
         await testAdmin.from("scholarships").insert({
           id: newSskaId,
           code: "SSKA",
-          name: "Smt. Shailaja Kittur Award",
+          name: "Sri Sripathi K A Memorial Scholarship",
+          fee_label: "Tuition fee per year",
           active: true,
-          rules: { requires_recommendation: true },
+          rules: {
+            "TODO [COLLEGE DECISION REQUIRED]": "Confirm income limit, eligible semesters, and mandatory enclosures with college governing body",
+            requires_hod_proctor_recommendation: true,
+          },
+          requires_recommendation: true,
         });
         sskaSch = { id: newSskaId };
       }

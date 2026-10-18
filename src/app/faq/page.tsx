@@ -33,7 +33,7 @@ export default function FAQPage() {
             <li><strong>Register:</strong> Create an account using your official SIT college email and mobile number.</li>
             <li><strong>Verify Email:</strong> Click the verification link sent to your inbox.</li>
             <li><strong>Log In:</strong> Sign in with your password and complete the CAPTCHA check.</li>
-            <li><strong>Select Scheme:</strong> Review guidelines for Dr. M.N. Channabasappa Endowment (MNC) or SSKA and click &quot;Apply Now&quot;.</li>
+            <li><strong>Select Scheme:</strong> Review guidelines for Dr. M.N. Channabasappa Endowment (MNC) or Sri Sripathi K A Memorial Scholarship (SSKA) and click &quot;Apply Now&quot;.</li>
             <li><strong>Complete Application Wizard:</strong> Fill out Student Details, Family Information, Academic Marks, Fee Structure, Bank Details, and upload the mandatory documents.</li>
             <li><strong>Review & Submit:</strong> Preview your completed draft, accept the declaration, and submit. You can download your official PDF receipt immediately.</li>
           </ol>
@@ -46,10 +46,57 @@ export default function FAQPage() {
             <li><strong>ನೋಂದಣಿ:</strong> ನಿಮ್ಮ ಕಾಲೇಜು ಇಮೇಲ್ ಮತ್ತು ಮೊಬೈಲ್ ಸಂಖ್ಯೆಯೊಂದಿಗೆ ಖಾತೆಯನ್ನು ರಚಿಸಿ.</li>
             <li><strong>ಇಮೇಲ್ ಪರಿಶೀಲನೆ:</strong> ನಿಮ್ಮ ಇನ್‌ಬಾಕ್ಸ್‌ಗೆ ಬಂದಿರುವ ಪರಿಶೀಲನಾ ಲಿಂಕ್ ಕ್ಲಿಕ್ ಮಾಡಿ.</li>
             <li><strong>ಲಾಗಿನ್:</strong> ನಿಮ್ಮ ಪಾಸ್‌ವರ್ಡ್ ಬಳಸಿ ಲಾಗಿನ್ ಆಗಿ.</li>
-            <li><strong>ಯೋಜನೆ ಆಯ್ಕೆ:</strong> ಎಂ.ಎನ್.ಸಿ ಅಥವಾ ಎಸ್.ಎಸ್.ಕೆ.ಎ ಮಾರ್ಗಸೂಚಿಗಳನ್ನು ಪರಿಶೀಲಿಸಿ &quot;ಅರ್ಜಿ ಸಲ್ಲಿಸಿ&quot; ಕ್ಲಿಕ್ ಮಾಡಿ.</li>
+            <li><strong>ಯೋಜನೆ ಆಯ್ಕೆ:</strong> ಡಾ. ಎಂ.ಎನ್. ಚನ್ನಬಸಪ್ಪ ಎಂಡೋಮೆಂಟ್ (MNC) ಅಥವಾ ಶ್ರೀ ಶ್ರೀಪತಿ ಕೆ.ಎ. ಸ್ಮಾರಕ ವಿದ್ಯಾರ್ಥಿವೇತನ (SSKA) ಮಾರ್ಗಸೂಚಿಗಳನ್ನು ಪರಿಶೀಲಿಸಿ &quot;ಅರ್ಜಿ ಸಲ್ಲಿಸಿ&quot; ಕ್ಲಿಕ್ ಮಾಡಿ.</li>
             <li><strong>ಅರ್ಜಿ ಭರ್ತಿ:</strong> ವೈಯಕ್ತಿಕ, ಕೌಟುಂಬಿಕ, ಶೈಕ್ಷಣಿಕ, ಬ್ಯಾಂಕ್ ಮತ್ತು ಕಡ್ಡಾಯ ದಾಖಲೆಗಳನ್ನು ಅಪ್‌ಲೋಡ್ ಮಾಡಿ.</li>
             <li><strong>ಅಂತಿಮ ಸಲ್ಲಿಕೆ:</strong> ವಿವರಗಳನ್ನು ಪರಿಶೀಲಿಸಿ, ಪ್ರಮಾಣೀಕರಿಸಿ ಮತ್ತು ಸಲ್ಲಿಸಿ. ನಂತರ ಅಧಿಕೃತ ಪಿಡಿಎಫ್ ಪ್ರತಿಯನ್ನು ಡೌನ್‌ಲೋಡ್ ಮಾಡಿಕೊಳ್ಳಿ.</li>
           </ol>
+        </div>
+      ),
+    },
+    {
+      id: 'scheme-guidelines',
+      q_en: '2. What are the key eligibility guidelines for MNC and SSKA schemes?',
+      q_kn: '2. ಎಂ.ಎನ್.ಸಿ (MNC) ಮತ್ತು ಎಸ್.ಎಸ್.ಕೆ.ಎ (SSKA) ಯೋಜನೆಗಳ ಪ್ರಮುಖ ಅರ್ಹತಾ ಮಾರ್ಗಸೂಚಿಗಳು ಯಾವುವು?',
+      a_en: (
+        <div className="space-y-3">
+          <div>
+            <h4 className="font-bold text-[#AC3D47]">Dr. M.N. Channabasappa Endowment Fund (MNC):</h4>
+            <ul className="list-disc list-inside space-y-1 text-gray-700 mt-1 pl-1">
+              <li>Merit-cum-means loan scholarship for financially deserving students.</li>
+              <li>Must be admitted through Common Entrance Test (CET).</li>
+              <li>Family annual income must not exceed Rs. 3,00,000 per annum.</li>
+              <li>Years 2–4 B.E. students must have zero backlogs across all previous semesters.</li>
+            </ul>
+          </div>
+          <div className="border-t border-gray-200 pt-2">
+            <h4 className="font-bold text-[#AC3D47]">Sri Sripathi K A Memorial Scholarship (SSKA):</h4>
+            <ul className="list-disc list-inside space-y-1 text-gray-700 mt-1 pl-1">
+              <li>Assistance scheme covering tuition fees for deserving students facing financial distress.</li>
+              <li>Requires formal appraisal and recommendation from the applicant&apos;s Proctor and Head of Department (HoD).</li>
+              <li><em>Note: Specific income ceilings, eligible semester criteria, and enclosure checklists are subject to final governing body confirmation (TODO [COLLEGE DECISION REQUIRED]).</em></li>
+            </ul>
+          </div>
+        </div>
+      ),
+      a_kn: (
+        <div className="space-y-3">
+          <div>
+            <h4 className="font-bold text-[#AC3D47]">ಡಾ. ಎಂ.ಎನ್. ಚನ್ನಬಸಪ್ಪ ಎಂಡೋಮೆಂಟ್ ಫಂಡ್ (MNC):</h4>
+            <ul className="list-disc list-inside space-y-1 text-gray-700 mt-1 pl-1">
+              <li>ಮೆರಿಟ್ ಮತ್ತು ಆರ್ಥಿಕ ಸ್ಥಿತಿಯ ಆಧಾರದ ಸಾಲ ವಿದ್ಯಾರ್ಥಿವೇತನ.</li>
+              <li>ಸಿಇಟಿ (CET) ಮೂಲಕ ಪ್ರವೇಶ ಪಡೆದಿರಬೇಕು.</li>
+              <li>ಕುಟುಂಬದ ವಾರ್ಷಿಕ ಆದಾಯ ರೂ. 3,00,000 ಮೀರಬಾರದು.</li>
+              <li>2, 3 ಮತ್ತು 4 ನೇ ವರ್ಷದ ವಿದ್ಯಾರ್ಥಿಗಳಿಗೆ ಯಾವುದೇ ಬ್ಯಾಕ್‌ಲಾಗ್ ಇರಬಾರದು.</li>
+            </ul>
+          </div>
+          <div className="border-t border-gray-200 pt-2">
+            <h4 className="font-bold text-[#AC3D47]">ಶ್ರೀ ಶ್ರೀಪತಿ ಕೆ.ಎ. ಸ್ಮಾರಕ ವಿದ್ಯಾರ್ಥಿವೇತನ (SSKA):</h4>
+            <ul className="list-disc list-inside space-y-1 text-gray-700 mt-1 pl-1">
+              <li>ಆರ್ಥಿಕ ಸಂಕಷ್ಟದಲ್ಲಿರುವ ಅರ್ಹ ವಿದ್ಯಾರ್ಥಿಗಳಿಗೆ ಟ್ಯೂಷನ್ ಶುಲ್ಕ ಸಹಾಯಧನ.</li>
+              <li>ವಿದ್ಯಾರ್ಥಿಯ ಪ್ರೊಕ್ಟರ್ ಮತ್ತು ವಿಭಾಗದ ಮುಖ್ಯಸ್ಥರ (HoD) ಅಧಿಕೃತ ಶಿಫಾರಸು ಕಡ್ಡಾಯ.</li>
+              <li><em>ಸೂಚನೆ: ನಿಖರ ಆದಾಯ ಮಿತಿ ಮತ್ತು ದಾಖಲೆಗಳ ಪರಿಶೀಲನಾ ಪಟ್ಟಿಯು ಕಾಲೇಜು ಆಡಳಿತ ಮಂಡಳಿಯ ಅಂತಿಮ ಅನುಮೋದನೆಗೆ ಒಳಪಟ್ಟಿರುತ್ತದೆ (TODO: ಕಾಲೇಜು ನಿರ್ಧಾರ ಬಾಕಿ ಇದೆ).</em></li>
+            </ul>
+          </div>
         </div>
       ),
     },

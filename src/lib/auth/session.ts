@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
 import { db } from "../db";
 import { UserRole } from "../types";
@@ -22,6 +23,19 @@ export interface SessionPayload {
  */
 export async function getCurrentSession(): Promise<SessionPayload | null> {
   try {
+    try {
+      const cookieStore = await cookies();
+      const allCookies = cookieStore.getAll();
+      const hasAuthCookie = allCookies.some(
+        (c) => c.name.startsWith("sb-") || c.name.includes("-auth-token")
+      );
+      if (!hasAuthCookie) {
+        return null;
+      }
+    } catch {
+      // Outside Next.js request context (tests or cron); proceed to createClient
+    }
+
     const supabase = await createClient();
     const {
       data: { user },

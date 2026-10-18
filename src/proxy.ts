@@ -16,7 +16,6 @@ export async function proxy(request: NextRequest) {
   // Light check only: refresh session; redirect logged-out users away from protected routes
   const protectedPaths = [
     "/dashboard",
-    "/apply",
     "/profile",
     "/applications",
     "/admin",

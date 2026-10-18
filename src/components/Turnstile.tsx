@@ -159,8 +159,36 @@ export const Turnstile = forwardRef<TurnstileRef, TurnstileProps>(function Turns
   }, [siteKey, renderWidget]);
 
   useEffect(() => {
-    const cleanup = loadScriptAndRender();
+    let cleanup: (() => void) | undefined;
+    let started = false;
+
+    const start = () => {
+      if (!started) {
+        started = true;
+        if (typeof window !== "undefined") {
+          window.removeEventListener("focusin", start);
+          window.removeEventListener("touchstart", start);
+          window.removeEventListener("mousemove", start);
+        }
+        cleanup = loadScriptAndRender();
+      }
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("focusin", start, { once: true, passive: true });
+      window.addEventListener("touchstart", start, { once: true, passive: true });
+      window.addEventListener("mousemove", start, { once: true, passive: true });
+    }
+
+    const timer = setTimeout(start, 3500);
+
     return () => {
+      clearTimeout(timer);
+      if (typeof window !== "undefined") {
+        window.removeEventListener("focusin", start);
+        window.removeEventListener("touchstart", start);
+        window.removeEventListener("mousemove", start);
+      }
       cleanup?.();
       if (widgetIdRef.current && window.turnstile) {
         try {

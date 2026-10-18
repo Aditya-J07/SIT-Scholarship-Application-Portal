@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useLanguage } from './LanguageToggle';
 
 export default function Footer() {
@@ -15,11 +16,12 @@ export default function Footer() {
         <div className="border-b border-gray-300 pb-8 mb-8">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
             <div className="flex items-start sm:items-center gap-4">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              <Image
                 src="/sit-logo.png"
                 alt="SIT Logo"
-                className="h-16 w-auto object-contain shrink-0"
+                width={64}
+                height={64}
+                className="h-16 w-16 object-contain shrink-0"
               />
               <div>
                 <h2 className="font-bold text-[#AC3D47] text-base sm:text-lg uppercase tracking-wide">

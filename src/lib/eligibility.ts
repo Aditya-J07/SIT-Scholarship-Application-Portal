@@ -14,25 +14,25 @@ export function evaluateEligibility(
   let other_assistance_exceeded = false;
   let amount_warn_exceeded = false;
 
-  // 1. Income limit rule (MNC: max Rs. 3,00,000)
-  const maxIncome = rules.income_limit ?? (scholarshipCode === 'MNC' ? 300000 : 500000);
-  if (data.family_annual_income !== undefined && data.family_annual_income > maxIncome) {
+  // 1. Income limit rule (MNC: max Rs. 3,00,000; SSKA: pending college confirmation)
+  const maxIncome = rules.income_limit ?? (scholarshipCode === 'MNC' ? 300000 : undefined);
+  if (maxIncome !== undefined && data.family_annual_income !== undefined && data.family_annual_income > maxIncome) {
     income_exceeded = true;
     const formattedMax = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(maxIncome);
     const msg = `Annual family income exceeds maximum limit of ${formattedMax} per annum.`;
     errors.push(msg);
   }
 
-  // 2. CET admission rule (MNC: only CET admitted)
-  if (rules.cet_required ?? (scholarshipCode === 'MNC')) {
-    if (data.admitted_through_cet === false) {
-      cet_disqualified = true;
-      errors.push('Student must be admitted through CET (Common Entrance Test). Management/ComedK quota is not eligible.');
-    }
+  // 2. CET admission rule (MNC: only CET admitted; SSKA: pending college confirmation)
+  const isCetRequired = rules.cet_required ?? (scholarshipCode === 'MNC' ? true : false);
+  if (isCetRequired && data.admitted_through_cet === false) {
+    cet_disqualified = true;
+    errors.push('Student must be admitted through CET (Common Entrance Test). Management/ComedK quota is not eligible.');
   }
 
-  // 3. Backlog rule (MNC: years 2-4 requires no backlog history)
-  if ((rules.allow_backlog === false || scholarshipCode === 'MNC') && data.year_of_study && data.year_of_study > 1) {
+  // 3. Backlog rule (MNC: years 2-4 requires no backlog history; SSKA: pending college confirmation)
+  const isBacklogDisallowed = rules.allow_backlog === false || (rules.allow_backlog === undefined && scholarshipCode === 'MNC');
+  if (isBacklogDisallowed && data.year_of_study && data.year_of_study > 1) {
     if (data.has_backlog_history === true) {
       backlog_disqualified = true;
       errors.push('Student has active or past backlog history. Only students with zero backlogs are eligible.');

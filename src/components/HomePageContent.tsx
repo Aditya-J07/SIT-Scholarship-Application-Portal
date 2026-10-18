@@ -1,17 +1,17 @@
-'use client';
-
 import React from 'react';
 import Link from 'next/link';
 import { Scholarship, AcademicCycle } from '@/lib/types';
-import { useLanguage } from '@/components/LanguageToggle';
+import { TranslationDict, Language, getTranslation } from '@/lib/i18n';
 
 interface HomePageContentProps {
   scholarships: Scholarship[];
   cycles: AcademicCycle[];
+  t?: TranslationDict;
+  lang?: Language;
 }
 
-export default function HomePageContent({ scholarships, cycles }: HomePageContentProps) {
-  const { t, lang } = useLanguage();
+export default function HomePageContent({ scholarships, cycles, t: propT, lang = 'en' }: HomePageContentProps) {
+  const t = propT || getTranslation(lang);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
