@@ -131,8 +131,7 @@ export default function AccessibilityPage() {
               <div>
                 <span className="font-bold text-gray-700">Email: </span>
                 <span className="text-[#AC3D47]">
-                  {/* TODO [COLLEGE DECISION REQUIRED]: Accessibility support email */}
-                  TODO [COLLEGE DECISION REQUIRED]: accessibility@sit.ac.in
+                  TODO [COLLEGE DECISION REQUIRED]: TODO_ACCESSIBILITY_CONTACT
                 </span>
               </div>
               <div>

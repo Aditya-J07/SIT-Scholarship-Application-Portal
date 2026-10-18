@@ -47,11 +47,7 @@ export async function POST(
 
     // 3. Re-verify acting admin's password against Supabase Auth using isolated non-cookie client (M4)
     const testUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
-    const testKey = (
-      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-      ""
-    ).trim();
+    const testKey = (process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "").trim();
 
     const verifyClient = createSupabaseClient(testUrl, testKey, {
       auth: { persistSession: false, autoRefreshToken: false },

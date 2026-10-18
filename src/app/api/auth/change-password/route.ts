@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
   const clientIp = getClientIp(req);
 
   try {
-    const { session, errorResponse } = await getAuthorizedSession();
+    const { session, errorResponse } = await getAuthorizedSession({ allowMustChangePassword: true });
     if (errorResponse) return errorResponse;
 
     // Rate limiting: 5 password changes per 15 minutes per user
@@ -62,11 +62,7 @@ export async function POST(req: NextRequest) {
 
       // Verify current password via isolated non-cookie client (M3)
       const testUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
-      const testKey = (
-        process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-        ""
-      ).trim();
+      const testKey = (process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "").trim();
 
       const verifyClient = createSupabaseClient(testUrl, testKey, {
         auth: { persistSession: false, autoRefreshToken: false },

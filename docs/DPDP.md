@@ -9,7 +9,7 @@ This document outlines the privacy governance model, data handling architecture,
 - **Data Fiduciary:** Siddaganga Institute of Technology (SIT), B.H. Road, Tumkur, Karnataka – 572103, India.
 - **Data Protection / Grievance Redressal Officer:**
   - **Designation:** Dean / Nodal Officer, Scholarships <!-- TODO [COLLEGE DECISION REQUIRED: Designate official name & office] -->
-  - **Email:** `privacy@sit.ac.in` / `scholarships@sit.ac.in` <!-- TODO [COLLEGE DECISION REQUIRED: Confirm official grievance inbox] -->
+  - **Email:** `TODO_DPO_CONTACT` / `TODO_SCHOLARSHIP_CONTACT` <!-- TODO [COLLEGE DECISION REQUIRED: Confirm official grievance contact] -->
   - **Address:** Administrative Block, SIT Campus, Tumkur – 572103
 - **Primary Beneficiaries (Data Principals):** Students enrolled at SIT and their parent/guardian sponsors.
 

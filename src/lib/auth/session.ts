@@ -72,13 +72,30 @@ export async function getCurrentSession(): Promise<SessionPayload | null> {
 
 /**
  * Enforces staff security requirements:
- * 1. 30-minute idle session timeout via last_seen_at (returns 401 IDLE_TIMEOUT)
- * 2. Authenticator Assurance Level 2 (TOTP verified) (returns 403 MFA_REQUIRED)
+ * 1. must_change_password compliance (returns 403 PASSWORD_CHANGE_REQUIRED)
+ * 2. 30-minute idle session timeout via last_seen_at (returns 401 IDLE_TIMEOUT)
+ * 3. Authenticator Assurance Level 2 (TOTP verified) (returns 403 MFA_REQUIRED)
  * Returns null if compliant or if caller is a student.
  */
-export function enforceStaffSession(session: SessionPayload): NextResponse | null {
+export function enforceStaffSession(
+  session: SessionPayload,
+  options?: { allowMustChangePassword?: boolean }
+): NextResponse | null {
   if (session.role === "admin" || session.role === "reviewer") {
-    // 1. Enforce 30-minute server-side idle timeout for staff accounts
+    // 1. Enforce must_change_password compliance for staff accounts
+    if (session.mustChangePassword && !options?.allowMustChangePassword) {
+      return NextResponse.json(
+        {
+          code: "PASSWORD_CHANGE_REQUIRED",
+          error: {
+            message: "Password change is required before accessing administrative or portal features.",
+          },
+        },
+        { status: 403 }
+      );
+    }
+
+    // 2. Enforce 30-minute server-side idle timeout for staff accounts
     if (session.last_seen_at) {
       const lastSeenMs = new Date(session.last_seen_at).getTime();
       const idleMinutes = (Date.now() - lastSeenMs) / (1000 * 60);
@@ -95,7 +112,7 @@ export function enforceStaffSession(session: SessionPayload): NextResponse | nul
       }
     }
 
-    // 2. Enforce TOTP MFA (aal2) for staff accounts: staff at aal1 get zero student or admin data
+    // 3. Enforce TOTP MFA (aal2) for staff accounts: staff at aal1 get zero student or admin data
     if (session.aal !== "aal2") {
       return NextResponse.json(
         {
@@ -117,7 +134,9 @@ export function enforceStaffSession(session: SessionPayload): NextResponse | nul
  * Validates the session, enforces staff idle & aal2 constraints,
  * and updates staff last_seen_at timestamp on active requests.
  */
-export async function getAuthorizedSession(): Promise<
+export async function getAuthorizedSession(options?: {
+  allowMustChangePassword?: boolean;
+}): Promise<
   { session: SessionPayload; errorResponse: null } | { session: null; errorResponse: NextResponse }
 > {
   const session = await getCurrentSession();
@@ -131,7 +150,7 @@ export async function getAuthorizedSession(): Promise<
     };
   }
 
-  const staffSecurityError = enforceStaffSession(session);
+  const staffSecurityError = enforceStaffSession(session, options);
   if (staffSecurityError) {
     return { session: null, errorResponse: staffSecurityError };
   }

@@ -29,10 +29,7 @@ export async function createClient(customCookieStore?: Awaited<ReturnType<typeof
   } catch {
     // Keep as is
   }
-  const supabaseKey =
-    (process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-      "").trim();
+  const supabaseKey = (process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "").trim();
 
   return createServerClient(supabaseUrl, supabaseKey, {
     cookies: {

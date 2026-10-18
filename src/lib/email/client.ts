@@ -66,7 +66,7 @@ export async function sendEmailNotification(options: SendEmailOptions): Promise<
 
   try {
     const { subject, text, html } = renderEmail(type, input);
-    const mailFrom = process.env.MAIL_FROM || 'SIT Scholarships <scholarships@sit.ac.in>';
+    const mailFrom = process.env.MAIL_FROM || 'SIT Scholarships <TODO_SENDER_EMAIL>';
 
     await smtpClient.sendMail({
       from: mailFrom,

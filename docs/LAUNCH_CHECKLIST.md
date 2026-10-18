@@ -52,8 +52,8 @@ Configure the following environment variables in your production hosting platfor
 | :--- | :--- | :--- |
 | `NEXT_PUBLIC_SITE_URL` | Canonical production URL (e.g. `https://scholarships.sit.ac.in`) | SIT IT DNS configuration |
 | `NEXT_PUBLIC_SUPABASE_URL` | Production Supabase API URL | Supabase Dashboard (Mumbai) |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase Public Anonymous Key | Supabase Dashboard |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase Secret Service Role Key (Server-only) | Supabase Dashboard |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase Public Publishable Key | Supabase Dashboard |
+| `SUPABASE_SECRET_KEY` | Supabase Secret Key (Server-only) | Supabase Dashboard |
 | `ENCRYPTION_KEY` | 32-byte cryptographically secure random key (hex or base64) for AES-256-GCM bank account encryption | Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `HASH_KEY` | 32-byte cryptographically secure random key for HMAC-SHA256 blind duplicate bank hashing | Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Cloudflare Turnstile Public Site Key | Cloudflare Dashboard (Hostname: `scholarships.sit.ac.in`) |
@@ -63,10 +63,10 @@ Configure the following environment variables in your production hosting platfor
 | `SMTP_SECURE` | Set `false` for port 587, `true` for port 465 | SIT Mail Server |
 | `SMTP_USER` | SMTP Authentication Username / IAM User | SIT Mail Server |
 | `SMTP_PASS` | SMTP Password / App Password | SIT Mail Server |
-| `SMTP_FROM` | From header (e.g. `SIT Scholarship Portal <scholarships@sit.ac.in>`) | Approved sender |
+| `SMTP_FROM` | From header (e.g. `SIT Scholarship Portal <TODO_SENDER_EMAIL>`) | Approved sender |
 | `CRON_SECRET` | 32-byte secret authorizing scheduled cron jobs (e.g. rate limit cleanup) | Random secret |
 | `REQUIRE_GUARDIAN_CONSENT_FOR_MINORS` | Set to `true` to strictly require parental consent for students < 18 | Default: `true` |
-| `RETENTION_YEARS` | Statutory data retention period in years | Default: `7` |
+| `RETENTION_YEARS` | Statutory data retention period in years | No default (must be set explicitly; purge runs dry-run only if unset) |
 
 ---
 
@@ -76,7 +76,7 @@ Configure the following environment variables in your production hosting platfor
    ```bash
    npx tsx scripts/create-admin.ts
    ```
-2. Enter the designated institutional administrator email (e.g. `admin.scholarships@sit.ac.in`).
+2. Enter the designated institutional administrator email (e.g. `TODO_INITIAL_ADMIN_EMAIL`).
 3. Enter a high-entropy password (min 12 chars).
 4. Log into the portal at `https://scholarships.sit.ac.in/admin-login`.
 5. **Enroll TOTP MFA:** Scan the QR code with an institutional authenticator app (Google Authenticator, Microsoft Authenticator). Enter the 6-digit TOTP code to establish **AAL2 assurance**.

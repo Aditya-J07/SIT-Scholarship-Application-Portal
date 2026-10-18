@@ -201,7 +201,7 @@ export default function AdminUsersPage() {
                   required
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  placeholder="e.g. shashishekar@sit.ac.in"
+                  placeholder="e.g. staff@example.com"
                   className="gov-input"
                 />
               </div>

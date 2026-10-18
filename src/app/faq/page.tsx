@@ -255,7 +255,7 @@ export default function FAQPage() {
             <div className="font-bold text-gray-900 font-sans">SIT Scholarship Helpdesk & Accounts Section</div>
             <div>Location: Administrative Block, Ground Floor, SIT Tumakuru</div>
             <div>Office Hours: Monday – Saturday, 9:30 AM to 5:00 PM</div>
-            <div>Email: <a href="mailto:scholarships@sit.ac.in" className="text-[#AC3D47] underline">scholarships@sit.ac.in</a></div>
+            <div>Email: <span className="text-[#AC3D47]">TODO_SCHOLARSHIPS_EMAIL</span></div>
             <div>Phone: 0816-2214000 / 0816-2214002</div>
           </div>
         </div>
@@ -267,7 +267,7 @@ export default function FAQPage() {
             <div className="font-bold text-gray-900">ವಿದ್ಯಾರ್ಥಿವೇತನ ಸಹಾಯವಾಣಿ ಮತ್ತು ಲೆಕ್ಕಪತ್ರ ವಿಭಾಗ</div>
             <div>ಸ್ಥಳ: ಆಡಳಿತ ಕಚೇರಿ, ನೆಲ ಮಹಡಿ, ಎಸ್.ಐ.ಟಿ ತುಮಕೂರು</div>
             <div>ಕಚೇರಿ ಸಮಯ: ಸೋಮವಾರ – ಶನಿವಾರ, ಬೆಳಿಗ್ಗೆ 9:30 ರಿಂದ ಸಂಜೆ 5:00</div>
-            <div>ಇಮೇಲ್: scholarships@sit.ac.in | ದೂರವಾಣಿ: 0816-2214000</div>
+            <div>ಇಮೇಲ್: TODO_SCHOLARSHIPS_EMAIL | ದೂರವಾಣಿ: 0816-2214000</div>
           </div>
         </div>
       ),

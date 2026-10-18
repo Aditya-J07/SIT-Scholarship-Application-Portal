@@ -24,7 +24,7 @@ By default, Supabase sends auth emails via a shared default service with strict 
 3. Navigate to **Project Settings** (gear icon) > **Authentication**.
 4. Scroll to **SMTP Settings** and toggle **Enable Custom SMTP** on.
 5. Enter the SMTP server credentials:
-   - **Sender email**: `scholarships@sit.ac.in` (or college-approved sender `TODO [COLLEGE DECISION REQUIRED]`)
+   - **Sender email**: `TODO_SENDER_EMAIL` (college-approved sender `TODO [COLLEGE DECISION REQUIRED]`)
    - **Sender name**: `SIT Scholarship Portal`
    - **Host**: Your institutional or cloud SMTP host (e.g., `smtp.office365.com`, `smtp.gmail.com`, or Amazon SES Mumbai `email-smtp.ap-south-1.amazonaws.com`)
    - **Port**: `587` (TLS) or `465` (SSL)
@@ -61,7 +61,7 @@ DMARC ties SPF and DKIM together to protect the domain from unauthorized spoofin
 - **Host**: `_dmarc.sit.ac.in`
 - **Value**:
   ```text
-  v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@sit.ac.in; pct=100
+  v=DMARC1; p=quarantine; rua=mailto:TODO_DMARC_REPORTS_EMAIL; pct=100
   ```
 
 ---

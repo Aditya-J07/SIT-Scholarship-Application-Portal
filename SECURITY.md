@@ -6,8 +6,8 @@ Siddaganga Institute of Technology (SIT), Tumkur takes the security and privacy 
 
 ### How to Report
 Please send an encrypted or direct email detailing your findings to:
-- **Security Team Contact:** `security@sit.ac.in` <!-- TODO [COLLEGE DECISION REQUIRED: Designate official security mailbox] -->
-- **Grievance Redressal / Nodal Officer:** `principal@sit.ac.in` <!-- TODO [COLLEGE DECISION REQUIRED: Confirm Nodal Officer email] -->
+- **Security Team Contact:** `TODO_SECURITY_CONTACT` <!-- TODO [COLLEGE DECISION REQUIRED: Designate official security contact] -->
+- **Grievance Redressal / Nodal Officer:** `TODO_NODAL_OFFICER_CONTACT` <!-- TODO [COLLEGE DECISION REQUIRED: Confirm Nodal Officer contact] -->
 
 Please include:
 - A clear description of the vulnerability and its potential impact.

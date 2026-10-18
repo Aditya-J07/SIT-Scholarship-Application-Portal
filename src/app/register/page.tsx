@@ -119,7 +119,7 @@ export default function RegisterPage() {
               required
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value.toLowerCase() })}
-              placeholder="name@sit.ac.in"
+              placeholder="student@example.edu"
               className="gov-input"
             />
           </div>

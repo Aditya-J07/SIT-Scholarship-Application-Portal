@@ -94,8 +94,8 @@ Configure these variables in `.env.local` for local development and in your host
 | :--- | :---: | :--- | :--- |
 | `NEXT_PUBLIC_SITE_URL` | **Required** | Canonical site URL (used for origin guards & callbacks) | `http://localhost:3000` (Dev) / `https://scholarships.sit.ac.in` (Prod) |
 | `NEXT_PUBLIC_SUPABASE_URL` | **Required** | Supabase Project API URL | `https://xyzcompany.supabase.co` |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | **Required** | Supabase Public Anonymous API Key | `eyJhbGciOi...` |
-| `SUPABASE_SERVICE_ROLE_KEY` | **Required** | Supabase Secret Service Role Key (Server-only) | `eyJhbGciOi...` |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | **Required** | Supabase Public Publishable API Key | `pk_...` |
+| `SUPABASE_SECRET_KEY` | **Required** | Supabase Secret Key (Server-only) | `sk_...` |
 | `ENCRYPTION_KEY` | **Required** | 32-byte hex/base64 key for AES-256-GCM bank account encryption | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `HASH_KEY` | **Required** | 32-byte hex/base64 key for HMAC-SHA256 blind bank account hashing | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | **Required** | Cloudflare Turnstile Public Site Key | `1x00000000000000000000AA` (Dummy test key) |
@@ -103,12 +103,12 @@ Configure these variables in `.env.local` for local development and in your host
 | `SMTP_HOST` | Optional | Outbound SMTP relay hostname | `smtp.office365.com` / `email-smtp.ap-south-1.amazonaws.com` |
 | `SMTP_PORT` | Optional | SMTP port (`587` for STARTTLS, `465` for SSL) | `587` |
 | `SMTP_SECURE` | Optional | `false` for port 587, `true` for port 465 | `false` |
-| `SMTP_USER` | Optional | SMTP authentication username / IAM user | `scholarships@sit.ac.in` |
+| `SMTP_USER` | Optional | SMTP authentication username / IAM user | `TODO_SMTP_USER` |
 | `SMTP_PASS` | Optional | SMTP authentication password / App password | `********` |
-| `SMTP_FROM` | Optional | Sender header displayed to students | `SIT Scholarship Portal <scholarships@sit.ac.in>` |
+| `SMTP_FROM` | Optional | Sender header displayed to students | `SIT Scholarship Portal <TODO_SENDER_EMAIL>` |
 | `CRON_SECRET` | Optional | Bearer secret authorizing automated rate limit purge cron | `random-32-char-token` |
 | `REQUIRE_GUARDIAN_CONSENT_FOR_MINORS` | Optional | Enforces legal guardian consent for students under 18 | `true` |
-| `RETENTION_YEARS` | Optional | DPDP statutory retention window in years | `7` |
+| `RETENTION_YEARS` | Optional | DPDP statutory retention window in years | No default (must be configured explicitly; runs dry-run only if unset) |
 
 ---
 

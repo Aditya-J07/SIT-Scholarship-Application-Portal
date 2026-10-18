@@ -202,8 +202,7 @@ export default function Footer() {
               <div className="font-bold text-gray-800">SIT Scholarship Cell / Helpdesk</div>
               <div className="text-[11px] text-gray-500">{/* TODO [COLLEGE DECISION REQUIRED]: Designate official nodal officer */}Nodal Officer (Scholarships)</div>
               <div className="mt-1 font-mono text-[#AC3D47]">
-                {/* TODO [COLLEGE DECISION REQUIRED]: Designate official scholarship email */}
-                <span className="text-gray-700">helpdesk@sit.ac.in (TODO: Confirm official email)</span>
+                <span className="text-gray-700">TODO_HELPDESK_EMAIL</span>
               </div>
               <div className="font-mono text-[11px] text-gray-700 mt-0.5">
                 0816-2214002
@@ -215,13 +214,7 @@ export default function Footer() {
             </h3>
             <div className="space-y-1 text-gray-600 font-mono text-[11px]">
               <div>
-                <a href="mailto:placements@sit.ac.in" className="hover:text-[#AC3D47] hover:underline">placements@sit.ac.in</a>
-              </div>
-              <div>
-                <a href="mailto:chowdarikk@sit.ac.in" className="hover:text-[#AC3D47] hover:underline">chowdarikk@sit.ac.in</a>
-              </div>
-              <div>
-                <a href="mailto:santhosh@sit.ac.in" className="hover:text-[#AC3D47] hover:underline">santhosh@sit.ac.in</a>
+                <span>TODO_PLACEMENT_CONTACT</span>
               </div>
             </div>
           </div>
@@ -234,9 +227,9 @@ export default function Footer() {
             <div className="space-y-1.5 text-gray-600 mb-4 leading-relaxed">
               <div>
                 <span className="font-semibold text-gray-700">Principal Office:</span>
-                <a href="mailto:principal@sit.ac.in" className="block font-mono text-[#AC3D47] hover:underline">
-                  principal@sit.ac.in
-                </a>
+                <span className="block font-mono text-[#AC3D47]">
+                  TODO_PRINCIPAL_OFFICE_EMAIL
+                </span>
               </div>
               <div className="font-mono text-[11px] space-y-0.5">
                 <div>+91 816 - 2282696</div>
@@ -251,7 +244,7 @@ export default function Footer() {
             <div className="text-gray-600 space-y-1 text-[11px] leading-relaxed">
               <div>{t.footer_contact_hours}</div>
               <div className="font-mono text-[#AC3D47]">
-                <a href="mailto:scholarships@sit.ac.in" className="hover:underline">scholarships@sit.ac.in</a>
+                <span>TODO_SCHOLARSHIP_EMAIL</span>
               </div>
               <div className="font-mono">0816-2214000</div>
               <div>Administrative Block, Ground Floor</div>

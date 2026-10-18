@@ -39,7 +39,7 @@ export function wrapGovEmailHtml(title: string, enContentHtml: string, knContent
       <td style="padding: 20px 28px; border-top: 1px solid #e2e8f0; font-size: 11px; line-height: 1.5; color: #64748b; background-color: #ffffff;">
         <div><strong>Scholarship Cell & Accounts Section</strong></div>
         <div>Siddaganga Institute of Technology, B.H. Road, Tumakuru – 572103</div>
-        <div style="margin-top: 4px;">Helpdesk: scholarships@sit.ac.in | Phone: 0816-2214000</div>
+        <div style="margin-top: 4px;">Helpdesk: TODO_SCHOLARSHIPS_HELPDESK_EMAIL | Phone: 0816-2214000</div>
         <div style="margin-top: 8px; font-size: 10px; color: #94a3b8;">
           This is an automated institutional message. Please do not reply directly to this email.
         </div>

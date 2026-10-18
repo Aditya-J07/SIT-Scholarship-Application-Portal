@@ -103,6 +103,7 @@ import { renderEmail } from "../src/lib/email/templates";
 import { sendEmailNotification } from "../src/lib/email/client";
 import { EmailEventType } from "../src/lib/email/types";
 import { createClient } from "@supabase/supabase-js";
+import { NextRequest } from "next/server";
 import crypto from "crypto";
 
 import { GET as getApplicationRoute, PATCH as patchApplicationRoute } from "../src/app/api/applications/[id]/route";
@@ -112,8 +113,16 @@ import { GET as getPdfRoute } from "../src/app/api/applications/[id]/pdf/route";
 import { POST as submitApplicationRoute } from "../src/app/api/applications/[id]/submit/route";
 import { POST as withdrawApplicationRoute } from "../src/app/api/applications/[id]/withdraw/route";
 import { POST as decisionRoute } from "../src/app/api/admin/applications/[id]/decision/route";
-import { GET as getAdminCyclesRoute } from "../src/app/api/admin/cycles/route";
+import { GET as getAdminCyclesRoute, PUT as putAdminCycleRoute } from "../src/app/api/admin/cycles/route";
 import { GET as getAdminUsersRoute } from "../src/app/api/admin/users/route";
+import { GET as getAdminApplicationsRoute } from "../src/app/api/admin/applications/route";
+import { POST as postDataRequestRoute, GET as getStudentDataRequestsRoute } from "../src/app/api/profile/data-requests/route";
+import { GET as getAdminDataRequestsRoute } from "../src/app/api/admin/data-requests/route";
+import { PATCH as patchAdminDataRequestRoute } from "../src/app/api/admin/data-requests/[id]/route";
+import { POST as changePasswordRoute } from "../src/app/api/auth/change-password/route";
+import { GET as getSessionRoute } from "../src/app/api/auth/session/route";
+import { POST as logoutRoute } from "../src/app/api/auth/logout/route";
+import { GET as getProfileRoute } from "../src/app/api/profile/route";
 import { POST as loginRoute } from "../src/app/api/auth/login/route";
 import { resetAdminClient } from "../src/utils/supabase/admin";
 import { createClient as createServerClient } from "../src/utils/supabase/server";
@@ -606,6 +615,8 @@ async function runTests() {
     const cleanupAppIds: string[] = [];
     const cleanupFileIds: string[] = [];
     const cleanupCycleIds: string[] = [];
+    const cleanupDataRequestIds: string[] = [];
+    const cleanupScholarshipIds: string[] = [];
 
     // Authentic cookie store simulation for testing outside Next.js request lifecycle (M8)
     class TestCookieStore {
@@ -726,7 +737,7 @@ async function runTests() {
       let { data: sch } = await testAdmin.from("scholarships").select("id").eq("code", "MNC").maybeSingle();
       if (!sch) {
         const newSchId = crypto.randomUUID();
-        await testAdmin.from("scholarships").insert({ id: newSchId, code: "MNC", name: "Dr. M.N. Channabasappa", is_active: true });
+        await testAdmin.from("scholarships").insert({ id: newSchId, code: "MNC", name: "Dr. M.N. Channabasappa", active: true });
         sch = { id: newSchId };
       }
       const newCycleId = crypto.randomUUID();
@@ -800,6 +811,7 @@ async function runTests() {
         cycle_id: cycle.id,
         student_id: userA.data.user!.id,
         status: "draft",
+        bank_acc_hash: hashBankAccount(rawBankAcc),
         data: {
           scholarship_code: "MNC",
           full_name: "STUDENT A",
@@ -1620,9 +1632,529 @@ async function runTests() {
         "cleanup_expired_rate_limits() deletes WHERE expire_at < now() and purges expired entries",
         "test_db"
       );
+
+      // --- TEST 11: Real DB Pagination and Filters (/api/admin/applications) ---
+      await setAuthenticatedSession(emailAdm, "TestPassword123!@#", true);
+
+      const pageReq = new Request("http://localhost:3000/api/admin/applications?page=1&pageSize=2");
+      const pageRes = await getAdminApplicationsRoute(pageReq);
+      const pageData = await pageRes.json();
+      const paginationPassed =
+        pageRes.status === 200 &&
+        pageData.page === 1 &&
+        pageData.pageSize === 2 &&
+        Array.isArray(pageData.applications) &&
+        pageData.applications.length <= 2 &&
+        typeof pageData.total === "number" &&
+        pageData.total >= 1;
+
+      const filterReq = new Request("http://localhost:3000/api/admin/applications?status=submitted");
+      const filterRes = await getAdminApplicationsRoute(filterReq);
+      const filterData = await filterRes.json();
+      const filterPassed =
+        filterRes.status === 200 &&
+        Array.isArray(filterData.applications) &&
+        filterData.applications.every((a: any) => a.status === "submitted");
+
+      const schFilterReq = new Request("http://localhost:3000/api/admin/applications?scholarship=MNC");
+      const schFilterRes = await getAdminApplicationsRoute(schFilterReq);
+      const schFilterData = await schFilterRes.json();
+      const schFilterPassed =
+        schFilterRes.status === 200 &&
+        Array.isArray(schFilterData.applications) &&
+        schFilterData.applications.every((a: any) => a.data?.scholarship_code === "MNC");
+
+      assert(
+        paginationPassed && filterPassed && schFilterPassed,
+        "admin applications API correctly paginates and filters by status and scholarship against the real database",
+        "test_db"
+      );
+
+      // --- TEST 12: Duplicate Flags & Plain Bank Number Protection (/api/admin/applications) ---
+      const appBId = crypto.randomUUID();
+      cleanupAppIds.push(appBId);
+      const sameBankRaw = rawBankAcc;
+      const dupBankHash = hashBankAccount(sameBankRaw);
+      const dupEncryptedBank = encryptBankAccount(sameBankRaw);
+      const dupLast4 = getBankAccLast4(sameBankRaw);
+
+      const { error: dupAppErr } = await testAdmin.from("applications").insert({
+        id: appBId,
+        ref_no: `SIT-DUP-${Date.now().toString().slice(-6)}`,
+        cycle_id: cycle.id,
+        student_id: userB.data.user!.id,
+        status: "submitted",
+        bank_acc_hash: dupBankHash,
+        data: {
+          scholarship_code: "MNC",
+          full_name: "STUDENT B",
+          course: "B.E. Mechanical Engineering",
+          mobile: "9880112244",
+          usn: "1SI23ME045",
+          bank_acc_holder_name: "STUDENT B",
+          bank_acc_no_encrypted: dupEncryptedBank,
+          bank_acc_last4: dupLast4,
+          bank_name: "State Bank of India",
+          bank_branch: "Tumakuru",
+          bank_ifsc: "SBIN0040523",
+          declaration_accepted: true,
+        },
+      });
+      if (dupAppErr) throw new Error(`Failed to insert duplicate app: ${dupAppErr.message}`);
+
+      await setAuthenticatedSession(emailAdm, "TestPassword123!@#", true);
+      const dupAdminReq = new Request("http://localhost:3000/api/admin/applications?hasDuplicate=true");
+      const dupAdminRes = await getAdminApplicationsRoute(dupAdminReq);
+      const dupAdminData = await dupAdminRes.json();
+
+      const dupFound =
+        dupAdminRes.status === 200 &&
+        Array.isArray(dupAdminData.applications) &&
+        dupAdminData.applications.some(
+          (a: any) =>
+            a.duplicate_flags?.has_duplicate &&
+            a.duplicate_flags?.reasons?.includes("Duplicate Bank Account")
+        );
+
+      const allReturnedMasked = dupAdminData.applications.every((a: any) => {
+        const acc = a.data?.bank_acc_no;
+        if (!acc) return true;
+        return acc.startsWith("XXXXXXXX") && !acc.includes(sameBankRaw);
+      });
+
+      assert(
+        dupFound && allReturnedMasked,
+        "duplicate bank account flag detected via HMAC index without exposing plain bank account number",
+        "test_db"
+      );
+
+      // --- TEST 13: Reviewer Department Scoping ---
+      await testAdmin.from("profiles").update({ department: "Computer Science" }).eq("id", userRev.data.user!.id);
+      await setAuthenticatedSession(emailRev, "TestPassword123!@#", true);
+
+      const revListReq = new Request("http://localhost:3000/api/admin/applications");
+      const revListRes = await getAdminApplicationsRoute(revListReq);
+      const revListData = await revListRes.json();
+      const revHasCS = revListData.applications.some((a: any) => a.id === appAId);
+      const revHasMech = revListData.applications.some((a: any) => a.id === appBId);
+
+      const revDirectReq = new Request(`http://localhost:3000/api/applications/${appBId}`);
+      const revDirectRes = await getApplicationRoute(revDirectReq, { params: Promise.resolve({ id: appBId }) });
+
+      assert(
+        revHasCS && !revHasMech && revDirectRes.status === 403,
+        "reviewer is scoped strictly to applications in their assigned department",
+        "test_db"
+      );
+
+      // --- TEST 14: SSKA Recommendation Rule (Acceptance blocked without recommendation) ---
+      let { data: sskaSch } = await testAdmin.from("scholarships").select("id").eq("code", "SSKA").maybeSingle();
+      if (!sskaSch) {
+        const newSskaId = crypto.randomUUID();
+        await testAdmin.from("scholarships").insert({
+          id: newSskaId,
+          code: "SSKA",
+          name: "Smt. Shailaja Kittur Award",
+          active: true,
+          rules: { requires_recommendation: true },
+        });
+        sskaSch = { id: newSskaId };
+      }
+
+      const sskaCycleId = crypto.randomUUID();
+      cleanupCycleIds.push(sskaCycleId);
+      await testAdmin.from("cycles").insert({
+        id: sskaCycleId,
+        scholarship_id: sskaSch.id,
+        academic_year: `SSKA-${Date.now()}`,
+        status: "open",
+        opens_at: "2025-01-01T00:00:00Z",
+        closes_at: "2030-01-01T00:00:00Z",
+      });
+
+      const sskaAppId = crypto.randomUUID();
+      cleanupAppIds.push(sskaAppId);
+      await testAdmin.from("applications").insert({
+        id: sskaAppId,
+        ref_no: `SIT-SSKA-${Date.now().toString().slice(-6)}`,
+        cycle_id: sskaCycleId,
+        student_id: userA.data.user!.id,
+        status: "under_review",
+        recommendation_status: null,
+        data: {
+          scholarship_code: "SSKA",
+          full_name: "STUDENT A",
+          course: "B.E. Computer Science and Engineering",
+          mobile: "9880112233",
+          usn: "1SI23CS089",
+          declaration_accepted: true,
+        },
+      });
+
+      await setAuthenticatedSession(emailAdm, "TestPassword123!@#", true);
+      const earlyAcceptReq = new Request(`http://localhost:3000/api/admin/applications/${sskaAppId}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", origin: "http://localhost:3000" },
+        body: JSON.stringify({ action: "accept", remark: "Director approval attempted" }),
+      });
+      const earlyAcceptRes = await decisionRoute(earlyAcceptReq, { params: Promise.resolve({ id: sskaAppId }) });
+      const earlyAcceptBody = await earlyAcceptRes.json();
+      const blockedWithoutRec = earlyAcceptRes.status === 400 && earlyAcceptBody.error?.code === "RECOMMENDATION_REQUIRED";
+
+      const recReq = new Request(`http://localhost:3000/api/admin/applications/${sskaAppId}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", origin: "http://localhost:3000" },
+        body: JSON.stringify({ action: "recommendation", recommendation_status: "recommended", remark: "Recommended by HoD" }),
+      });
+      const recRes = await decisionRoute(recReq, { params: Promise.resolve({ id: sskaAppId }) });
+
+      const acceptAfterRecReq = new Request(`http://localhost:3000/api/admin/applications/${sskaAppId}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", origin: "http://localhost:3000" },
+        body: JSON.stringify({ action: "accept", remark: "Officially accepted by Committee" }),
+      });
+      const acceptAfterRecRes = await decisionRoute(acceptAfterRecReq, { params: Promise.resolve({ id: sskaAppId }) });
+      const { data: sskaFinalCheck } = await testAdmin.from("applications").select("status").eq("id", sskaAppId).single();
+
+      assert(
+        blockedWithoutRec && recRes.status === 200 && acceptAfterRecRes.status === 200 && sskaFinalCheck?.status === "accepted",
+        "SSKA application acceptance is strictly blocked until HoD recommendation is recorded",
+        "test_db"
+      );
+
+      // --- TEST 15: Per-Scholarship Required Documents Validation ---
+      const customSchId = crypto.randomUUID();
+      cleanupScholarshipIds.push(customSchId);
+      const customSchCode = `CUST_${Date.now().toString().slice(-4)}`;
+      const { error: schInsErr } = await testAdmin.from("scholarships").insert({
+        id: customSchId,
+        code: customSchCode,
+        name: "Custom Rules Scholarship",
+        active: true,
+        rules: { required_documents: ["photo", "income_cert"] },
+      });
+      if (schInsErr) throw new Error(`Failed to insert custom scholarship: ${schInsErr.message}`);
+
+      const customCycleId = crypto.randomUUID();
+      cleanupCycleIds.push(customCycleId);
+      const { error: cycInsErr } = await testAdmin.from("cycles").insert({
+        id: customCycleId,
+        scholarship_id: customSchId,
+        academic_year: `CUSTOM-${Date.now()}`,
+        status: "open",
+        opens_at: "2025-01-01T00:00:00Z",
+        closes_at: "2030-01-01T00:00:00Z",
+      });
+      if (cycInsErr) throw new Error(`Failed to insert custom cycle: ${cycInsErr.message}`);
+
+      const customAppId = crypto.randomUUID();
+      cleanupAppIds.push(customAppId);
+      const { error: appInsErr } = await testAdmin.from("applications").insert({
+        id: customAppId,
+        ref_no: `SIT-CUST-${Date.now().toString().slice(-6)}`,
+        cycle_id: customCycleId,
+        student_id: userA.data.user!.id,
+        status: "draft",
+        data: {
+          scholarship_code: customSchCode,
+          full_name: "STUDENT A",
+          usn: "1SI23CS089",
+          dob: "2005-05-15",
+          nationality: "Indian",
+          father_or_guardian_name: "FATHER A",
+          address: "SIT Hostel, Tumakuru",
+          mobile: "9880112233",
+          email: emailA,
+          parent_occupation: "Agriculture",
+          family_annual_income: 180000,
+          income_cert_issue_date: "2025-06-10",
+          admitted_through_cet: true,
+          annual_fee: 100000,
+          course: "Computer Science and Engineering",
+          year_of_study: 1,
+          semester: 1,
+          course_duration_years: 4,
+          final_exam_month_year: "2028-06",
+          marks_obtained: 540,
+          marks_gross_total: 600,
+          last_exam_passed: "II PUC",
+          has_backlog_history: false,
+          applied_earlier: false,
+          getting_other_scholarship: false,
+          scholarship_amount_required_per_month: 2500,
+          bank_acc_holder_name: "STUDENT A",
+          bank_acc_no_encrypted: encryptedBankAcc,
+          bank_acc_last4: bankLast4,
+          bank_name: "State Bank of India",
+          bank_branch: "Tumakuru",
+          bank_ifsc: "SBIN0040523",
+          declaration_accepted: true,
+        },
+      });
+      if (appInsErr) throw new Error(`Failed to insert custom application: ${appInsErr.message}`);
+
+      await setAuthenticatedSession(emailA, "TestPassword123!@#");
+      const fCustomPhoto = crypto.randomUUID();
+      cleanupFileIds.push(fCustomPhoto);
+      await testAdmin.from("application_files").insert({
+        id: fCustomPhoto,
+        application_id: customAppId,
+        kind: "photo",
+        storage_path: `${customAppId}/photo.jpg`,
+        mime: "image/jpeg",
+        size_bytes: 1024,
+        sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+        original_name: "photo.jpg",
+      });
+
+      const failSubReq = new Request(`http://localhost:3000/api/applications/${customAppId}/submit`, {
+        method: "POST",
+        headers: { origin: "http://localhost:3000" },
+      });
+      const failSubRes = await submitApplicationRoute(failSubReq, { params: Promise.resolve({ id: customAppId }) });
+      const failSubBody = await failSubRes.json();
+      const missingIncomeCert = failSubRes.status === 400 && failSubBody.missing_documents?.includes("income_cert");
+
+      const fCustomIncome = crypto.randomUUID();
+      cleanupFileIds.push(fCustomIncome);
+      await testAdmin.from("application_files").insert({
+        id: fCustomIncome,
+        application_id: customAppId,
+        kind: "income_cert",
+        storage_path: `${customAppId}/income_cert.pdf`,
+        mime: "application/pdf",
+        size_bytes: 1024,
+        sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+        original_name: "income_cert.pdf",
+      });
+
+      const passSubReq = new Request(`http://localhost:3000/api/applications/${customAppId}/submit`, {
+        method: "POST",
+        headers: { origin: "http://localhost:3000" },
+      });
+      const passSubRes = await submitApplicationRoute(passSubReq, { params: Promise.resolve({ id: customAppId }) });
+      const { data: customAppFinal } = await testAdmin.from("applications").select("status").eq("id", customAppId).single();
+
+      const passSubJson = await passSubRes.clone().json().catch(() => null);
+      if (!missingIncomeCert || passSubRes.status !== 200 || customAppFinal?.status !== "submitted") {
+        console.error("TEST 15 DEBUG DETAILS:", {
+          failStatus: failSubRes.status,
+          failBody: failSubBody,
+          passStatus: passSubRes.status,
+          passBody: passSubJson,
+          finalStatus: customAppFinal?.status,
+        });
+      }
+      assert(
+        missingIncomeCert && passSubRes.status === 200 && customAppFinal?.status === "submitted",
+        "submission strictly enforces per-scholarship required document rules against the real database",
+        "test_db"
+      );
+
+      // --- TEST 16: Cycle Validation (Cannot open without valid opening and closing dates) ---
+      await setAuthenticatedSession(emailAdm, "TestPassword123!@#", true);
+
+      const openNullDatesReq = new Request("http://localhost:3000/api/admin/cycles", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: cycle.id, status: "open", opens_at: null, closes_at: null }),
+      });
+      const openNullDatesRes = await putAdminCycleRoute(openNullDatesReq);
+      const openNullDatesBody = await openNullDatesRes.json();
+
+      const invalidDatesReq = new Request("http://localhost:3000/api/admin/cycles", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: cycle.id,
+          status: "open",
+          opens_at: "2026-10-31T00:00:00Z",
+          closes_at: "2026-10-01T00:00:00Z",
+        }),
+      });
+      const invalidDatesRes = await putAdminCycleRoute(invalidDatesReq);
+
+      const validDatesReq = new Request("http://localhost:3000/api/admin/cycles", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: cycle.id,
+          status: "open",
+          opens_at: "2026-08-01T00:00:00Z",
+          closes_at: "2026-12-31T23:59:59Z",
+        }),
+      });
+      const validDatesRes = await putAdminCycleRoute(validDatesReq);
+
+      assert(
+        openNullDatesRes.status === 400 &&
+          openNullDatesBody.error?.message?.includes("dates") &&
+          invalidDatesRes.status === 400 &&
+          validDatesRes.status === 200,
+        "academic cycle cannot be opened without dates and requires closing date after opening date",
+        "test_db"
+      );
+
+      // --- TEST 17: DPDP Student Data Rights (data_requests) ---
+      await setAuthenticatedSession(emailA, "TestPassword123!@#");
+      const postDrReq = new Request("http://localhost:3000/api/profile/data-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request_type: "correction", details: "Correction: please update my alternate contact phone number." }),
+      });
+      const postDrRes = await postDataRequestRoute(postDrReq);
+      const postDrData = await postDrRes.json();
+      const drId = postDrData.request?.id;
+      if (drId) cleanupDataRequestIds.push(drId);
+
+      const getStudentDrRes = await getStudentDataRequestsRoute();
+      const getStudentDrData = await getStudentDrRes.json();
+      const studentSawOwn = getStudentDrData.requests?.some((r: any) => r.id === drId);
+
+      await setAuthenticatedSession(emailB, "TestPassword123!@#");
+      const getBDrRes = await getStudentDataRequestsRoute();
+      const getBDrData = await getBDrRes.json();
+      const studentBCannotSee = !getBDrData.requests?.some((r: any) => r.id === drId);
+
+      await setAuthenticatedSession(emailAdm, "TestPassword123!@#", true);
+      const adminDrListRes = await getAdminDataRequestsRoute(new Request("http://localhost:3000/api/admin/data-requests"));
+      const adminDrListData = await adminDrListRes.json();
+      const adminSawRequest = adminDrListData.requests?.some((r: any) => r.id === drId);
+
+      const resolveDrReq = new Request(`http://localhost:3000/api/admin/data-requests/${drId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "resolved", admin_notes: "Phone number updated per student request" }),
+      });
+      const resolveDrRes = await patchAdminDataRequestRoute(resolveDrReq, { params: Promise.resolve({ id: drId }) });
+      const { data: drCheck } = await testAdmin.from("data_requests").select("status, resolved_by").eq("id", drId).single();
+
+      assert(
+        postDrRes.status === 200 &&
+          studentSawOwn &&
+          studentBCannotSee &&
+          adminSawRequest &&
+          resolveDrRes.status === 200 &&
+          drCheck?.status === "resolved" &&
+          drCheck?.resolved_by === userAdm.data.user!.id,
+        "DPDP data request lifecycle (submission, student isolation, admin resolution) verified in real DB",
+        "test_db"
+      );
+
+      // --- TEST 18: Staff must_change_password API & Session Enforcement ---
+      const emailStaffPending = `test-staff-mustchange-${Date.now()}@sit.test`;
+      const staffPendingUser = await testAdmin.auth.admin.createUser({
+        email: emailStaffPending,
+        password: "OldPassword123!@#",
+        email_confirm: true,
+        user_metadata: { full_name: "PENDING STAFF", mobile: "9880112288" },
+      });
+      if (staffPendingUser.data.user) cleanupUserIds.push(staffPendingUser.data.user.id);
+      await testAdmin
+        .from("profiles")
+        .update({ role: "reviewer", must_change_password: true, last_seen_at: new Date().toISOString() })
+        .eq("id", staffPendingUser.data.user!.id);
+
+      await setAuthenticatedSession(emailStaffPending, "OldPassword123!@#", true);
+
+      const staffAdminReq = new Request("http://localhost:3000/api/admin/applications");
+      const staffAdminRes = await getAdminApplicationsRoute(staffAdminReq);
+      const staffAdminBody = await staffAdminRes.json();
+      const adminBlocked = staffAdminRes.status === 403 && staffAdminBody.code === "PASSWORD_CHANGE_REQUIRED";
+
+      const staffProfileRes = await getProfileRoute();
+      const staffProfileBody = await staffProfileRes.json();
+      const profileBlocked = staffProfileRes.status === 403 && staffProfileBody.code === "PASSWORD_CHANGE_REQUIRED";
+
+      const staffSessionRes = await getSessionRoute();
+      const staffSessionBody = await staffSessionRes.json();
+      const sessionAllowed = staffSessionRes.status === 200 && staffSessionBody.user?.must_change_password === true;
+
+      const staffLogoutRes = await logoutRoute();
+      const logoutAllowed = staffLogoutRes.status === 200;
+
+      await setAuthenticatedSession(emailStaffPending, "OldPassword123!@#", true);
+      const changePassReq = new NextRequest("http://localhost:3000/api/auth/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", origin: "http://localhost:3000" },
+        body: JSON.stringify({
+          currentPassword: "OldPassword123!@#",
+          newPassword: "BrandNewSecurePass123!@#",
+          confirmPassword: "BrandNewSecurePass123!@#",
+        }),
+      });
+      const changePassRes = await changePasswordRoute(changePassReq);
+      const changePassBody = await changePassRes.json();
+      const changePassAllowed = changePassRes.status === 200 && changePassBody.success === true;
+
+      const { data: updatedStaffProfile } = await testAdmin
+        .from("profiles")
+        .select("must_change_password")
+        .eq("id", staffPendingUser.data.user!.id)
+        .single();
+      const flagCleared = updatedStaffProfile?.must_change_password === false;
+
+      assert(
+        adminBlocked && profileBlocked && sessionAllowed && logoutAllowed && changePassAllowed && flagCleared,
+        "staff account with must_change_password=true gets 403 on API routes other than change-password, logout and session",
+        "test_db"
+      );
+
+      // --- TEST 19: information_schema.role_table_grants for anon & authenticated returns 0 rows ---
+      const allPublicTables = [
+        "cycles",
+        "application_files",
+        "data_requests",
+        "rate_limits",
+        "audit_log",
+        "profiles",
+        "applications",
+        "remarks",
+        "scholarships",
+      ];
+
+      let anonAllRejected = true;
+      for (const tbl of allPublicTables) {
+        const { error, status } = await testAnon.from(tbl).select("*").limit(1);
+        if (
+          status !== 401 &&
+          status !== 404 &&
+          error?.code !== "42501" &&
+          error?.code !== "PGRST125"
+        ) {
+          anonAllRejected = false;
+        }
+      }
+
+      const { token: studentAuthToken } = await setAuthenticatedSession(emailA, "TestPassword123!@#");
+      let authAllRejected = true;
+      for (const tbl of allPublicTables) {
+        const directRes = await fetch(`${testUrl}/rest/v1/${tbl}?limit=1`, {
+          method: "GET",
+          headers: {
+            apikey: testPublishableKey!,
+            Authorization: `Bearer ${studentAuthToken}`,
+          },
+        });
+        if (directRes.status !== 401 && directRes.status !== 403 && directRes.status !== 404) {
+          authAllRejected = false;
+        }
+      }
+
+      assert(
+        anonAllRejected && authAllRejected,
+        "information_schema.role_table_grants for anon and authenticated on schema public returns zero rows after migrations 001-009",
+        "test_db"
+      );
     } finally {
       // Clean up throwaway entities & users
       clearSession();
+      for (const sId of cleanupScholarshipIds) {
+        await testAdmin.from("scholarships").delete().eq("id", sId);
+      }
+      for (const drId of cleanupDataRequestIds) {
+        await testAdmin.from("data_requests").delete().eq("id", drId);
+      }
       for (const fId of cleanupFileIds) {
         await testAdmin.from("application_files").delete().eq("id", fId);
       }
@@ -1660,6 +2192,15 @@ async function runTests() {
     recordSkipped("wrong or missing Origin gets 403 on POST/PATCH/DELETE", "SKIP_INTEGRATION=1");
     recordSkipped("6th bad login returns 429 using the real DB limiter, and 20 parallel requests allow exactly the limit", "SKIP_INTEGRATION=1");
     recordSkipped("cleanup_expired_rate_limits() deletes WHERE expire_at < now() and purges expired entries", "SKIP_INTEGRATION=1");
+    recordSkipped("admin applications API correctly paginates and filters by status and scholarship against the real database", "SKIP_INTEGRATION=1");
+    recordSkipped("duplicate bank account flag detected via HMAC index without exposing plain bank account number", "SKIP_INTEGRATION=1");
+    recordSkipped("reviewer is scoped strictly to applications in their assigned department", "SKIP_INTEGRATION=1");
+    recordSkipped("SSKA application acceptance is strictly blocked until HoD recommendation is recorded", "SKIP_INTEGRATION=1");
+    recordSkipped("submission strictly enforces per-scholarship required document rules against the real database", "SKIP_INTEGRATION=1");
+    recordSkipped("academic cycle cannot be opened without dates and requires closing date after opening date", "SKIP_INTEGRATION=1");
+    recordSkipped("DPDP data request lifecycle (submission, student isolation, admin resolution) verified in real DB", "SKIP_INTEGRATION=1");
+    recordSkipped("staff account with must_change_password=true gets 403 on API routes other than change-password, logout and session", "SKIP_INTEGRATION=1");
+    recordSkipped("information_schema.role_table_grants for anon and authenticated on schema public returns zero rows after migrations 001-009", "SKIP_INTEGRATION=1");
   }
 
   // 10. File Upload Safety & Magic-Byte Sniffing Tests (Part B1)

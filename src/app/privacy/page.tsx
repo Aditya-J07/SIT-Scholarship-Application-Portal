@@ -249,8 +249,7 @@ export default function PrivacyPage() {
                 <div>
                   <span className="font-bold text-gray-700">Email: </span>
                   <span className="text-[#AC3D47]">
-                    {/* TODO [COLLEGE DECISION REQUIRED]: Official DPDP Grievance email */}
-                    TODO [COLLEGE DECISION REQUIRED]: grievance-dpdp@sit.ac.in
+                    TODO [COLLEGE DECISION REQUIRED]: TODO_GRIEVANCE_EMAIL
                   </span>
                 </div>
                 <div>

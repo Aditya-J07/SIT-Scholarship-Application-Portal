@@ -24,13 +24,15 @@ loadEnvConfig(process.cwd());
 
 import { createClient } from "@supabase/supabase-js";
 
-// TODO [COLLEGE DECISION REQUIRED]: Confirm institutional data retention period with Governing Body (default: 7 years)
-const DEFAULT_RETENTION_YEARS = 7;
-const retentionYears = process.env.RETENTION_YEARS
-  ? parseInt(process.env.RETENTION_YEARS, 10)
-  : DEFAULT_RETENTION_YEARS;
+// RETENTION_YEARS has NO default. The college must explicitly configure it.
+// TODO [COLLEGE DECISION REQUIRED]: Confirm institutional data retention period with Governing Body.
+const rawRetention = process.env.RETENTION_YEARS;
+const parsedRetention = rawRetention ? parseInt(rawRetention, 10) : NaN;
+const isRetentionExplicit = !isNaN(parsedRetention) && parsedRetention > 0;
 
-const isDryRun = !process.argv.includes("--execute");
+const wantsExecute = process.argv.includes("--execute");
+const isDryRun = !isRetentionExplicit || !wantsExecute;
+const retentionYears = isRetentionExplicit ? parsedRetention : 7; // Reference estimate for dry-run inspection only
 
 async function purgeOldCycleData() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -39,6 +41,12 @@ async function purgeOldCycleData() {
   if (!supabaseUrl || !supabaseSecretKey) {
     console.error("[Purge] Fatal: Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SECRET_KEY.");
     process.exit(1);
+  }
+
+  if (wantsExecute && !isRetentionExplicit) {
+    console.error("\n[Purge Error] Refusing to execute live purge: RETENTION_YEARS environment variable has no default and is not set.");
+    console.error("              TODO [COLLEGE DECISION REQUIRED]: You must set RETENTION_YEARS explicitly before permanent deletion can run.");
+    console.error("              Forcing DRY-RUN mode to show counts only.\n");
   }
 
   const supabase = createClient(supabaseUrl, supabaseSecretKey, {
@@ -51,7 +59,7 @@ async function purgeOldCycleData() {
   console.log("====================================================");
   console.log("INSTITUTIONAL DATA RETENTION PURGE ENGINE");
   console.log(`  Mode:             ${isDryRun ? "DRY-RUN (Counts only, no changes)" : "EXECUTE (Permanent deletion)"}`);
-  console.log(`  Retention Window: ${retentionYears} Years`);
+  console.log(`  Retention Window: ${isRetentionExplicit ? `${retentionYears} Years (Explicitly configured)` : "NOT CONFIGURED (Showing sample 7-year counts)"}`);
   console.log(`  Cutoff Date:      ${cutoffDate.toISOString().slice(0, 10)}`);
   console.log("====================================================\n");
 

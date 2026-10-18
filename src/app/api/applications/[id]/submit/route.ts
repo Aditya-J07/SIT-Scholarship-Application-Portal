@@ -131,10 +131,11 @@ export async function POST(
     }
 
     // 2. Check File Uploads (Photo, Signatures, Enclosures)
+    // Per-scholarship required documents support
     const files = await db.listFilesForApplication(application.id);
     const uploadedKinds = new Set(files.map((f: ApplicationFileRecord) => f.kind));
 
-    const requiredFiles = [
+    const defaultRequiredFiles = [
       'photo',
       'sig_student',
       'sig_parent',
@@ -144,9 +145,17 @@ export async function POST(
       'aadhaar',
       'fee_receipt',
       'principal_cert',
-    ] as const;
+    ];
 
-    const missingFiles = requiredFiles.filter((k) => !uploadedKinds.has(k));
+    const requiredFiles = (
+      scholarship.rules?.required_documents &&
+      Array.isArray(scholarship.rules.required_documents) &&
+      scholarship.rules.required_documents.length > 0
+    )
+      ? scholarship.rules.required_documents
+      : defaultRequiredFiles;
+
+    const missingFiles = requiredFiles.filter((k: string) => !uploadedKinds.has(k as ApplicationFileRecord['kind']));
 
     if (missingFiles.length > 0) {
       return NextResponse.json(
@@ -154,7 +163,10 @@ export async function POST(
           error: {
             message: `Please upload all required files before submitting. Missing: ${missingFiles.join(', ')}`,
             missingFiles,
+            missing_documents: missingFiles,
           },
+          missingFiles,
+          missing_documents: missingFiles,
         },
         { status: 400 }
       );

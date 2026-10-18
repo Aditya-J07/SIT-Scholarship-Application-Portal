@@ -488,7 +488,7 @@ export default function ApplyWizardPage({
                   required
                   value={formData.email || ''}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value.toLowerCase() })}
-                  placeholder="rohan@sit.ac.in"
+                  placeholder="student@example.com"
                   className="gov-input"
                 />
                 {fieldErrors.email && <p className="text-red-600 text-[11px] mt-1">{fieldErrors.email[0]}</p>}
