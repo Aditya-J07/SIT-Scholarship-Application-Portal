@@ -90,29 +90,34 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 Configure these variables in `.env.local` for local development and in your hosting platform (Vercel) for production:
 
+> **Build-Time Note:** Variables prefixed with `NEXT_PUBLIC_` (`NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `NEXT_PUBLIC_COLLEGE_NAME`, `NEXT_PUBLIC_COLLEGE_LOCATION`) are inlined into client-side JavaScript bundles at build time (`npm run build`). Whenever any `NEXT_PUBLIC_` variable changes, a fresh build must be triggered.
+>
+> **Custom SMTP Required:** Supabase Auth built-in SMTP has strict default rate limits (e.g. 3 emails/hour). Custom SMTP is strictly required in production for both Supabase Auth settings and the portal's outbound Nodemailer engine (`SMTP_*`, `MAIL_FROM`) to prevent signup and invitation delivery throttling.
+
 | Variable | Requirement | Description | Example / Default |
 | :--- | :---: | :--- | :--- |
-| `NEXT_PUBLIC_SITE_URL` | **Required** | Canonical site URL (used for origin guards & callbacks) | `http://localhost:3000` (Dev) / `https://scholarships.sit.ac.in` (Prod) |
-| `NEXT_PUBLIC_SUPABASE_URL` | **Required** | Supabase Project API URL | `https://xyzcompany.supabase.co` |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | **Required** | Supabase Public Publishable API Key | `pk_...` |
+| `NEXT_PUBLIC_SITE_URL` | **Required** | Canonical site URL (used for origin guards & callbacks; baked in at build time) | `http://localhost:3000` (Dev) / `https://scholarships.sit.ac.in` (Prod) |
+| `NEXT_PUBLIC_APP_URL` | **Required** | Canonical application URL (baked in at build time) | `http://localhost:3000` (Dev) / `https://scholarships.sit.ac.in` (Prod) |
+| `NEXT_PUBLIC_SUPABASE_URL` | **Required** | Supabase Project API URL (baked in at build time) | `https://xyzcompany.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | **Required** | Supabase Public Publishable API Key (baked in at build time) | `pk_...` |
 | `SUPABASE_SECRET_KEY` | **Required** | Supabase Secret Key (Server-only) | `sk_...` |
-| `ENCRYPTION_KEY` | **Required** | 32-byte hex/base64 key for AES-256-GCM bank account encryption | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
-| `HASH_KEY` | **Required** | 32-byte hex/base64 key for HMAC-SHA256 blind bank account hashing | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
-| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | **Required** | Cloudflare Turnstile Public Site Key | `1x00000000000000000000AA` (Dummy test key) |
+| `ENCRYPTION_KEY` | **Required** | 32-byte base64 key for AES-256-GCM bank account encryption | `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
+| `HASH_KEY` | **Required** | 32-byte base64 key for HMAC-SHA256 blind bank account hashing | `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
+| `CRON_SECRET` | Optional | Bearer secret authorizing automated rate limit purge cron | `random-32-char-token` |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | **Required** | Cloudflare Turnstile Public Site Key (baked in at build time) | `1x00000000000000000000AA` (Dummy test key) |
 | `TURNSTILE_SECRET_KEY` | **Required** | Cloudflare Turnstile Secret Key | `1x0000000000000000000000000000000AA` (Dummy test key) |
 | `SMTP_HOST` | Optional | Outbound SMTP relay hostname | `smtp.office365.com` / `email-smtp.ap-south-1.amazonaws.com` |
 | `SMTP_PORT` | Optional | SMTP port (`587` for STARTTLS, `465` for SSL) | `587` |
 | `SMTP_SECURE` | Optional | `false` for port 587, `true` for port 465 | `false` |
 | `SMTP_USER` | Optional | SMTP authentication username / IAM user | `TODO_SMTP_USER` |
 | `SMTP_PASS` | Optional | SMTP authentication password / App password | `********` |
-| `SMTP_FROM` | Optional | Sender header displayed to students | `SIT Scholarship Portal <TODO_SENDER_EMAIL>` |
-| `CRON_SECRET` | Optional | Bearer secret authorizing automated rate limit purge cron | `random-32-char-token` |
+| `MAIL_FROM` | Optional | Sender header displayed to students | `SIT Scholarship Portal <scholarships@sit.ac.in>` |
 | `REQUIRE_GUARDIAN_CONSENT_FOR_MINORS` | Optional | Enforces legal guardian consent for students under 18 | `true` |
 | `RETENTION_YEARS` | Optional | DPDP statutory retention window in years | No default (must be configured explicitly; runs dry-run only if unset) |
 
 ---
 
-## 6. Chronological Database Migrations (001 to 009)
+## 6. Chronological Database Migrations (001 to 011)
 
 When setting up or updating Supabase databases, apply migrations in strict chronological order:
 
@@ -123,8 +128,10 @@ When setting up or updating Supabase databases, apply migrations in strict chron
 5. **`supabase/migrations/005_lockdown.sql`**: PostgREST lockdown, privilege revocation for anonymous/student roles on audit logs and status updates.
 6. **`supabase/migrations/006_consent.sql`**: Consent versioning columns (`consent_version`, `consent_at`) and cycle date constraint updates.
 7. **`supabase/migrations/007_duplicate_flags.sql`**: `bank_acc_hash` column, B-Tree index, and duplicate flag tracking.
-8. **`supabase/migrations/008_department.sql`**: `reviewer_departments` text array column on `profiles` for reviewer scoping.
+8. **`supabase/migrations/008_department.sql`**: `department` column on `profiles` for reviewer scoping.
 9. **`supabase/migrations/009_data_requests.sql`**: `data_requests` table for DPDP student data access, correction, and erasure requests.
+10. **`supabase/migrations/010_application_department.sql`**: `department` column on `applications` for exact-match reviewer scoping and indexed filtering.
+11. **`supabase/migrations/011_remarks_visibility.sql`**: `visible_to_student` column on `remarks` to explicitly govern visibility of staff remarks to students.
 
 ---
 

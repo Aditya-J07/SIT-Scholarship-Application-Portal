@@ -17,7 +17,7 @@ This checklist provides the authoritative, step-by-step production deployment ru
 
 ---
 
-## 2. Database Migration Sequence (001 to 009)
+## 2. Database Migration Sequence (001 to 011)
 
 Execute the SQL migrations in strict numerical order using the Supabase SQL Editor or Supabase CLI:
 
@@ -34,10 +34,12 @@ If applying manually via Supabase Dashboard **SQL Editor**, execute in this exac
 5. `005_lockdown.sql` — Direct PostgREST lockdown, privilege revocation for anonymous/student roles on audit logs and status updates.
 6. `006_consent.sql` — DPDP consent versioning columns (`consent_version`, `consent_at`) and cycle date constraint updates.
 7. `007_duplicate_flags.sql` — `bank_acc_hash` column, B-Tree index, and duplicate tracking flags.
-8. `008_department.sql` — `reviewer_departments` text array column on `profiles` for reviewer scoping.
+8. `008_department.sql` — `department` column on `profiles` for reviewer scoping.
 9. `009_data_requests.sql` — `data_requests` table for DPDP student correction/erasure requests with RLS policies.
+10. `010_application_department.sql` — `department` column on `applications` for exact-match reviewer scoping and indexed filtering.
+11. `011_remarks_visibility.sql` — `visible_to_student` column on `remarks` to explicitly govern visibility of staff remarks to students.
 
-- [ ] Verify that all 9 migrations completed with zero SQL errors.
+- [ ] Verify that all 11 migrations completed with zero SQL errors.
 - [ ] Ensure Supabase Storage private buckets exist:
   - `application-files` (Private, max file size 5MB, allow `image/jpeg`, `image/png`, `application/pdf`)
   - `application-pdfs` (Private, max file size 10MB, allow `application/pdf`)
@@ -48,23 +50,29 @@ If applying manually via Supabase Dashboard **SQL Editor**, execute in this exac
 
 Configure the following environment variables in your production hosting platform (e.g. Vercel Project Settings). **Never commit production keys to git!**
 
+> [!IMPORTANT]
+> **Build-Time Note:** Variables prefixed with `NEXT_PUBLIC_` (`NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `NEXT_PUBLIC_COLLEGE_NAME`, `NEXT_PUBLIC_COLLEGE_LOCATION`) are inlined into client-side JavaScript bundles at build time (`npm run build`). Whenever any `NEXT_PUBLIC_` variable is updated in production, a fresh build must be triggered.
+>
+> **Custom SMTP Required:** Supabase Auth built-in SMTP has strict default rate limits (e.g. 3 emails/hour). Custom SMTP is strictly required in production for both Supabase Auth settings (Supabase Dashboard → Authentication → SMTP Settings) and the portal's Nodemailer outbound engine (`SMTP_*`, `MAIL_FROM`) to prevent signup and invitation delivery failures.
+
 | Environment Variable | Description | Source / Requirement |
 | :--- | :--- | :--- |
-| `NEXT_PUBLIC_SITE_URL` | Canonical production URL (e.g. `https://scholarships.sit.ac.in`) | SIT IT DNS configuration |
-| `NEXT_PUBLIC_SUPABASE_URL` | Production Supabase API URL | Supabase Dashboard (Mumbai) |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase Public Publishable Key | Supabase Dashboard |
+| `NEXT_PUBLIC_SITE_URL` | Canonical production public URL (e.g. `https://scholarships.sit.ac.in`) | SIT IT DNS configuration (Baked in at build time) |
+| `NEXT_PUBLIC_APP_URL` | Canonical application URL | SIT IT DNS configuration (Baked in at build time) |
+| `NEXT_PUBLIC_SUPABASE_URL` | Production Supabase API URL | Supabase Dashboard (Mumbai) (Baked in at build time) |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase Public Publishable Key | Supabase Dashboard (Baked in at build time) |
 | `SUPABASE_SECRET_KEY` | Supabase Secret Key (Server-only) | Supabase Dashboard |
-| `ENCRYPTION_KEY` | 32-byte cryptographically secure random key (hex or base64) for AES-256-GCM bank account encryption | Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
-| `HASH_KEY` | 32-byte cryptographically secure random key for HMAC-SHA256 blind duplicate bank hashing | Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
-| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Cloudflare Turnstile Public Site Key | Cloudflare Dashboard (Hostname: `scholarships.sit.ac.in`) |
+| `ENCRYPTION_KEY` | 32-byte cryptographically secure random key (base64) for AES-256-GCM bank account encryption | Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
+| `HASH_KEY` | 32-byte cryptographically secure random key for HMAC-SHA256 blind duplicate bank hashing | Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
+| `CRON_SECRET` | 32-byte secret authorizing scheduled cron jobs (e.g. rate limit cleanup) | Random 32+ char secret |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Cloudflare Turnstile Public Site Key | Cloudflare Dashboard (Hostname: `scholarships.sit.ac.in`) (Baked in at build time) |
 | `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile Secret Key | Cloudflare Dashboard |
 | `SMTP_HOST` | Campus or Cloud SMTP Host (e.g. `smtp.office365.com` or `email-smtp.ap-south-1.amazonaws.com`) | SIT Mail Server |
 | `SMTP_PORT` | SMTP Port (`587` for STARTTLS or `465` for SSL) | SIT Mail Server |
 | `SMTP_SECURE` | Set `false` for port 587, `true` for port 465 | SIT Mail Server |
 | `SMTP_USER` | SMTP Authentication Username / IAM User | SIT Mail Server |
 | `SMTP_PASS` | SMTP Password / App Password | SIT Mail Server |
-| `SMTP_FROM` | From header (e.g. `SIT Scholarship Portal <TODO_SENDER_EMAIL>`) | Approved sender |
-| `CRON_SECRET` | 32-byte secret authorizing scheduled cron jobs (e.g. rate limit cleanup) | Random secret |
+| `MAIL_FROM` | From header displayed to students (e.g. `SIT Scholarship Portal <scholarships@sit.ac.in>`) | Approved campus sender |
 | `REQUIRE_GUARDIAN_CONSENT_FOR_MINORS` | Set to `true` to strictly require parental consent for students < 18 | Default: `true` |
 | `RETENTION_YEARS` | Statutory data retention period in years | No default (must be set explicitly; purge runs dry-run only if unset) |
 

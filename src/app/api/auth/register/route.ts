@@ -88,6 +88,8 @@ export async function POST(request: Request) {
     }
 
     const supabase = await createClient();
+    let userId: string | null = null;
+
     const { data: authData, error: signUpError } = await supabase.auth.signUp({
       email: normalizedEmail,
       password,
@@ -100,8 +102,17 @@ export async function POST(request: Request) {
     });
 
     if (signUpError) {
-      console.warn("[Register] signUp message:", signUpError.message);
+      // Propagate sign‑up error – fallback creation via admin client is removed per Phase 3d.
+      console.warn("[Register] signUp error:", signUpError.message);
+      return NextResponse.json(
+        { error: { message: signUpError.message } },
+        { status: signUpError.status ?? 400 }
+      );
     } else if (authData.user?.id) {
+      userId = authData.user.id;
+    }
+
+    if (userId) {
       // Record consent acceptance in profiles table per DPDP compliance (M7)
       try {
         const admin = getAdminClient();
@@ -111,17 +122,17 @@ export async function POST(request: Request) {
             consent_accepted_at: new Date().toISOString(),
             consent_version: PRIVACY_VERSION,
           })
-          .eq("id", authData.user.id);
+          .eq("id", userId);
       } catch (consentErr) {
         console.warn("[Register] Failed to record consent timestamp:", consentErr);
       }
 
       await db.logAudit({
-        actor_id: authData.user.id,
+        actor_id: userId,
         actor_email: normalizedEmail,
         action: "USER_REGISTERED",
         entity: "profiles",
-        entity_id: authData.user.id,
+        entity_id: userId,
         meta: { role: "student", consent_version: PRIVACY_VERSION },
         ip: clientIp,
       });

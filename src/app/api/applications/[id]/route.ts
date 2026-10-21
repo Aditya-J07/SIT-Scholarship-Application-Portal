@@ -4,7 +4,7 @@ import { canReviewerAccessDepartment } from '@/lib/auth/admin-guard';
 import { db } from '@/lib/db';
 import { calculateMeritScore, calculatePercentage } from '@/lib/merit';
 import { evaluateEligibility } from '@/lib/eligibility';
-import { step1Schema, step2Schema, step3Schema, step4Schema, step5Schema } from '@/lib/schemas/application';
+import { step1Schema, step2Schema, step3Schema, step4Schema, step5Schema, step7Schema } from '@/lib/schemas/application';
 import { decryptBankAccount, encryptBankAccount, hashBankAccount } from '@/lib/crypto/field-encryption';
 import { verifyStateChangingOrigin } from '@/lib/auth/origin-guard';
 import { getClientIp } from '@/lib/rate-limit';
@@ -256,10 +256,10 @@ export async function PATCH(
       }
     }
 
-    // Step must be integer 1 to 5
-    if (typeof step !== 'number' || step < 1 || step > 5 || !Number.isInteger(step)) {
+    // Step must be integer 1 to 7
+    if (typeof step !== 'number' || step < 1 || step > 7 || !Number.isInteger(step)) {
       return NextResponse.json(
-        { error: { message: 'Step must be an integer between 1 and 5' } },
+        { error: { message: 'Step must be an integer between 1 and 7' } },
         { status: 400 }
       );
     }
@@ -325,6 +325,18 @@ export async function PATCH(
       };
       delete (validatedCleanData as Record<string, unknown>).bank_acc_no;
       delete (validatedCleanData as Record<string, unknown>).confirm_bank_acc_no;
+    } else if (step === 6) {
+      // Step 6 is document uploads (files uploaded via /files endpoint)
+      validatedCleanData = {};
+    } else if (step === 7) {
+      const res = step7Schema.safeParse(stepData);
+      if (!res.success) {
+        return NextResponse.json(
+          { error: { message: res.error.issues[0]?.message || 'Invalid step 7 declaration data', fields: res.error.flatten().fieldErrors } },
+          { status: 400 }
+        );
+      }
+      validatedCleanData = res.data;
     }
 
     // Strip any forbidden or client-manipulable keys

@@ -2,12 +2,10 @@
 
 import React, { useState, useRef } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useLanguage } from '@/components/LanguageToggle';
 import { Turnstile, TurnstileRef } from '@/components/Turnstile';
 
 export default function RegisterPage() {
-  const router = useRouter();
   const { t, lang } = useLanguage();
   const [formData, setFormData] = useState({
     full_name: '',
@@ -53,8 +51,8 @@ export default function RegisterPage() {
         turnstileRef.current?.reset();
         setTurnstileToken('');
       } else {
-        router.push('/dashboard');
-        router.refresh();
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- hard redirect keeps auth cookies
+        window.location.href = '/dashboard';
       }
     } catch {
       setLoading(false);

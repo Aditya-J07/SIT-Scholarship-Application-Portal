@@ -28,6 +28,16 @@ export async function verifyTurnstileToken(
     };
   }
 
+  const isNonProd = process.env.NODE_ENV !== "production";
+
+  // Turnstile test-key handling and token bypass ONLY apply when NODE_ENV !== 'production'
+  if (isNonProd) {
+    const isTestKey = secretKey.startsWith("1x") || siteKey.startsWith("1x");
+    if (isTestKey || !token || token.startsWith("1x") || token === "test-token" || token.trim().length === 0) {
+      return { success: true };
+    }
+  }
+
   if (!token || typeof token !== "string" || token.trim().length === 0) {
     return {
       success: false,
@@ -39,8 +49,18 @@ export async function verifyTurnstileToken(
     const formData = new URLSearchParams();
     formData.append("secret", secretKey);
     formData.append("response", token.trim());
-    if (clientIp && clientIp !== "127.0.0.1" && clientIp !== "unknown") {
-      formData.append("remoteip", clientIp);
+
+    // Loopback IP suppression only applies in non-production environments to allow local testing.
+    // In production, remoteip is always passed when clientIp is available.
+    if (clientIp) {
+      const isLocalIp =
+        clientIp === "127.0.0.1" ||
+        clientIp === "::1" ||
+        clientIp === "unknown" ||
+        clientIp.startsWith("::ffff:127.");
+      if (!isNonProd || !isLocalIp) {
+        formData.append("remoteip", clientIp);
+      }
     }
 
     const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {

@@ -126,6 +126,7 @@ export const db = {
       full_name: profile.full_name,
       mobile: profile.mobile,
       email: profile.email.toLowerCase(),
+      department: profile.department || null,
       must_change_password: profile.must_change_password ?? false,
       bank_account_holder: profile.bank_account_holder || null,
       bank_acc_no_encrypted: encAccount,
@@ -139,7 +140,7 @@ export const db = {
 
     const { data, error } = await supabase
       .from("profiles")
-      .insert(insertPayload)
+      .upsert(insertPayload, { onConflict: "id" })
       .select("*")
       .single();
 
@@ -537,13 +538,26 @@ export const db = {
       updated_at: new Date().toISOString(),
     };
 
-    const { data, error } = await supabase
+    let res = await supabase
       .from("applications")
       .update(updatePayload)
       .eq("id", id)
       .in("status", ["draft", "needs_correction"])
       .select("*")
       .maybeSingle();
+
+    if (res.error && (res.error.message?.includes("fetch failed") || res.error.message?.includes("ECONNRESET"))) {
+      await new Promise((r) => setTimeout(r, 600));
+      res = await supabase
+        .from("applications")
+        .update(updatePayload)
+        .eq("id", id)
+        .in("status", ["draft", "needs_correction"])
+        .select("*")
+        .maybeSingle();
+    }
+
+    const { data, error } = res;
 
     if (error) {
       if ((error.code === "PGRST204" || error.code === "42703" || error.message?.includes("department")) && "department" in updatePayload) {
@@ -692,6 +706,17 @@ export const db = {
       .single();
 
     if (error) {
+      if (
+        (error.code === "PGRST204" || error.code === "42703" || error.message?.includes("visible_to_student")) &&
+        "visible_to_student" in remark
+      ) {
+        const fallbackRemark = { ...remark };
+        delete (fallbackRemark as Record<string, unknown>).visible_to_student;
+        const retry = await supabase.from("remarks").insert(fallbackRemark).select("*").single();
+        if (!retry.error) {
+          return { ...(retry.data as RemarkRecord), visible_to_student: remark.visible_to_student };
+        }
+      }
       console.error("[DB] addRemark error:", error.message);
       throw new Error(`Failed to add remark: ${error.message}`);
     }

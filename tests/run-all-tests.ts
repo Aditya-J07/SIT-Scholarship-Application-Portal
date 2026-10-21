@@ -124,11 +124,12 @@ import { GET as getSessionRoute } from "../src/app/api/auth/session/route";
 import { POST as logoutRoute } from "../src/app/api/auth/logout/route";
 import { GET as getProfileRoute } from "../src/app/api/profile/route";
 import { POST as loginRoute } from "../src/app/api/auth/login/route";
-import { resetAdminClient } from "../src/utils/supabase/admin";
+import { getAdminClient, resetAdminClient } from "../src/utils/supabase/admin";
 import { createClient as createServerClient } from "../src/utils/supabase/server";
 import { verifyTurnstileToken } from "../src/lib/auth/turnstile";
 import { canReviewerAccessDepartment } from "../src/lib/auth/admin-guard";
 import { normalizeDepartment, SIT_DEPARTMENTS } from "../src/lib/constants/departments";
+import { db } from "../src/lib/db";
 
 let passedTests = 0;
 let totalTests = 0;
@@ -600,11 +601,33 @@ async function runTests() {
   // 9. Phase 2e Real API Route Integration Suite against Test Database (never production)
   console.log(`\n--- 9. Real API Route Integration Suite (against test DB: ${testUrl || "NONE"}) ---`);
   if (hasTestDbConfig && !skipIntegration) {
+    const resilientFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          return await fetch(input, init);
+        } catch (err: any) {
+          if (
+            attempt < 2 &&
+            (err?.message?.includes("fetch failed") ||
+              err?.message?.includes("ECONNRESET") ||
+              err?.code === "ECONNRESET")
+          ) {
+            await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+            continue;
+          }
+          throw err;
+        }
+      }
+      return fetch(input, init);
+    };
+
     const testAdmin = createClient(testUrl!, testSecretKey!, {
       auth: { autoRefreshToken: false, persistSession: false },
+      global: { fetch: resilientFetch },
     });
     const testAnon = createClient(testUrl!, testPublishableKey!, {
       auth: { autoRefreshToken: false, persistSession: false },
+      global: { fetch: resilientFetch },
     });
 
     process.env.NEXT_PUBLIC_SUPABASE_URL = testUrl;
@@ -637,6 +660,13 @@ async function runTests() {
       }
       clear() {
         this.cookies.clear();
+      }
+      clone(): TestCookieStore {
+        const copy = new TestCookieStore();
+        for (const [k, v] of this.cookies.entries()) {
+          copy.set(k, v);
+        }
+        return copy;
       }
     }
 
@@ -857,17 +887,27 @@ async function runTests() {
         const fId = crypto.randomUUID();
         if (k === "photo") primaryFileId = fId;
         cleanupFileIds.push(fId);
-        const { error: fInsErr } = await testAdmin.from("application_files").insert({
-          id: fId,
-          application_id: appAId,
-          kind: k,
-          storage_path: `${appAId}/${k}-${fId}.jpg`,
-          mime: "image/jpeg",
-          size_bytes: 1024,
-          sha256: "0000000000000000000000000000000000000000000000000000000000000000",
-          original_name: `${k}.jpg`,
-        });
-        if (fInsErr) throw new Error(`Failed to insert file ${k}: ${fInsErr.message}`);
+        let fInsErr: any;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const res = await testAdmin.from("application_files").insert({
+              id: fId,
+              application_id: appAId,
+              kind: k,
+              storage_path: `${appAId}/${k}-${fId}.jpg`,
+              mime: "image/jpeg",
+              size_bytes: 1024,
+              sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+              original_name: `${k}.jpg`,
+            });
+            fInsErr = res.error;
+            if (!fInsErr) break;
+          } catch (netErr: any) {
+            fInsErr = netErr;
+            await new Promise((r) => setTimeout(r, 600));
+          }
+        }
+        if (fInsErr) throw new Error(`Failed to insert file ${k}: ${fInsErr.message || fInsErr}`);
       }
 
       // --- SECTION 1: Direct PostgREST attacks (C1, C2, C3, plus restore 'Student cannot elevate own role to admin') ---
@@ -1207,6 +1247,15 @@ async function runTests() {
         { params: Promise.resolve({ id: appAId }) }
       );
 
+      if (revPatchDraft.status !== 403 || admPatchDraft.status !== 403) {
+        console.error("DEBUG DRAFT PATCH:", {
+          revStatus: revPatchDraft.status,
+          revBody: await revPatchDraft.clone().json().catch(() => null),
+          admStatus: admPatchDraft.status,
+          admBody: await admPatchDraft.clone().json().catch(() => null),
+        });
+      }
+
       assert(
         revPatchDraft.status === 403 && admPatchDraft.status === 403,
         "reviewer and admin-aal2 cannot PATCH a student's draft application (403)",
@@ -1528,6 +1577,7 @@ async function runTests() {
       const aal1Users = await getAdminUsersRoute(
         new Request("http://localhost:3000/api/admin/users")
       );
+
       assert(
         aal1Cycles.status === 403 && aal1Users.status === 403,
         "staff without aal2 get 403 on /api/admin/*",
@@ -2195,14 +2245,24 @@ async function runTests() {
       const noDeptBlocked = noDeptListRes.status === 403 && noDeptSingleRes.status === 403;
 
       // 2. Insert application for course "Electronics and Instrumentation Engineering" (contains substring 'me')
+      const emailEie = `test-student-eie-${Date.now()}@sit.test`;
+      const userEie = await testAdmin.auth.admin.createUser({
+        email: emailEie,
+        password: "TestPassword123!@#",
+        email_confirm: true,
+        user_metadata: { full_name: "STUDENT EIE", mobile: "9880112244" },
+      });
+      if (userEie.data.user) cleanupUserIds.push(userEie.data.user.id);
+
       const appEieId = crypto.randomUUID();
       cleanupAppIds.push(appEieId);
-      await testAdmin.from("applications").insert({
+      const { error: appEieInsErr } = await testAdmin.from("applications").insert({
         id: appEieId,
         ref_no: `SIT-EIE-${Date.now().toString().slice(-6)}`,
         cycle_id: cycle.id,
-        student_id: userB.data.user!.id,
+        student_id: userEie.data.user!.id,
         status: "submitted",
+        department: "EIE",
         data: {
           scholarship_code: "MNC",
           full_name: "STUDENT EIE",
@@ -2215,6 +2275,7 @@ async function runTests() {
           declaration_accepted: true,
         },
       });
+      if (appEieInsErr) throw new Error(`Failed to insert EIE app: ${appEieInsErr.message}`);
 
       // 3. Reviewer with department ME sees only ME applications and gets 403 on non-ME application
       await testAdmin.from("profiles").update({ department: "ME" }).eq("id", userRev.data.user!.id);
@@ -2247,8 +2308,8 @@ async function runTests() {
         admListData.applications.some((a: any) => a.id === appEieId);
 
       // 5. Submitting an application stores the normalized department
-      const { data: dbSubmittedApp } = await testAdmin.from("applications").select("data").eq("id", appAId).single();
-      const normDeptStored = dbSubmittedApp?.data?.department === "CSE";
+      const { data: dbSubmittedApp } = await testAdmin.from("applications").select("data, department").eq("id", appAId).single();
+      const normDeptStored = dbSubmittedApp?.department === "CSE" || dbSubmittedApp?.data?.department === "CSE";
 
       if (!(noDeptBlocked && meListSeesOnlyMech && meScopingCorrect && adminSeesAll && normDeptStored)) {
         console.error("TEST 21 DEBUG FAILURE:", {
@@ -2263,7 +2324,7 @@ async function runTests() {
           meScopingCorrect,
           adminSeesAll,
           normDeptStored,
-          dbSubmittedDept: dbSubmittedApp?.data?.department,
+          dbSubmittedDept: dbSubmittedApp?.data?.department || dbSubmittedApp?.department,
         });
       }
 
@@ -2276,11 +2337,13 @@ async function runTests() {
       // --- TEST 22 (Phase 3c Item 5): Staff Invitation Flow & Bootstrap Admin Password Enforcement ---
       await setAuthenticatedSession(emailAdm, "TestPassword123!@#", true);
       let inviteSpyCalledWith: { email: string; options?: any } | null = null;
-      const originalInvite = testAdmin.auth.admin.inviteUserByEmail.bind(testAdmin.auth.admin);
-      testAdmin.auth.admin.inviteUserByEmail = async (invEmail: string, invOpts?: any) => {
+      const sharedAdmin = getAdminClient();
+      const originalSharedInvite = sharedAdmin.auth.admin.inviteUserByEmail.bind(sharedAdmin.auth.admin);
+      const originalTestInvite = testAdmin.auth.admin.inviteUserByEmail.bind(testAdmin.auth.admin);
+      const mockInvite = async (invEmail: string, invOpts?: any) => {
         inviteSpyCalledWith = { email: invEmail, options: invOpts };
         try {
-          const realRes = await originalInvite(invEmail, invOpts);
+          const realRes = await originalSharedInvite(invEmail, invOpts);
           if (!realRes.error && realRes.data?.user) return realRes;
         } catch { }
         return await testAdmin.auth.admin.createUser({
@@ -2289,6 +2352,8 @@ async function runTests() {
           user_metadata: invOpts?.data,
         });
       };
+      sharedAdmin.auth.admin.inviteUserByEmail = mockInvite;
+      testAdmin.auth.admin.inviteUserByEmail = mockInvite;
 
       const newStaffEmail = `new-staff-rev-${Date.now()}@sit.test`;
       const createStaffReq = new Request("http://localhost:3000/api/admin/users", {
@@ -2303,9 +2368,14 @@ async function runTests() {
         }),
       });
 
-      const createStaffRes = await postAdminUserRoute(createStaffReq);
-      const createStaffJson = await createStaffRes.json();
-      testAdmin.auth.admin.inviteUserByEmail = originalInvite;
+      let createStaffJson: any = null;
+      try {
+        const createStaffRes = await postAdminUserRoute(createStaffReq);
+        createStaffJson = await createStaffRes.json();
+      } finally {
+        sharedAdmin.auth.admin.inviteUserByEmail = originalSharedInvite;
+        testAdmin.auth.admin.inviteUserByEmail = originalTestInvite;
+      }
 
       const createdStaffUserId = createStaffJson?.user?.id;
       if (createdStaffUserId) cleanupUserIds.push(createdStaffUserId);
@@ -2344,6 +2414,302 @@ async function runTests() {
       assert(
         inviteDispatched && staffProfileCorrect && invalidDeptRejected && bootstrapAdminEnforced,
         "creating staff user sends Supabase Auth email invite, sets must_change_password: false, rejects invalid department, while bootstrap admin requires must_change_password: true",
+        "test_db"
+      );
+
+      // --- TEST 23 (Phase 3d Item 5): Remarks Visibility Enforcement (visible_to_student) ---
+      // A correction_request remark marked visible_to_student appears to the student; an internal note does not.
+      await setAuthenticatedSession(emailAdm, "TestPassword123!@#", true);
+      const internalNoteId = crypto.randomUUID();
+      const internalNoteBody = `INTERNAL_STAFF_NOTE_${Date.now()}`;
+      await db.addRemark({
+        id: internalNoteId,
+        application_id: appAId,
+        author_id: userAdm.data.user!.id,
+        author_name: "STAFF ADMIN",
+        author_role: "admin",
+        kind: "internal_note",
+        body: internalNoteBody,
+        visible_to_student: false,
+        created_at: new Date().toISOString(),
+      });
+
+      const correctionReqId = crypto.randomUUID();
+      const correctionReqBody = `CORRECTION_FOR_STUDENT_${Date.now()}`;
+      await db.addRemark({
+        id: correctionReqId,
+        application_id: appAId,
+        author_id: userAdm.data.user!.id,
+        author_name: "STAFF ADMIN",
+        author_role: "admin",
+        kind: "correction_request",
+        body: correctionReqBody,
+        visible_to_student: true,
+        created_at: new Date().toISOString(),
+      });
+
+      // 1. Fetch as Student Owner (should see correction_request, but NOT internal_note)
+      await setAuthenticatedSession(emailA, "TestPassword123!@#");
+      const stuAppRes = await getApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${appAId}`),
+        { params: Promise.resolve({ id: appAId }) }
+      );
+      const stuAppJson = await stuAppRes.json();
+      const studentRemarks: any[] = stuAppJson.remarks || [];
+      const studentSeesCorrection = studentRemarks.some((r) => r.body === correctionReqBody);
+      const studentSeesInternalNote = studentRemarks.some((r) => r.body === internalNoteBody);
+
+      // 2. Fetch as Staff / Admin (should see both remarks)
+      await setAuthenticatedSession(emailAdm, "TestPassword123!@#", true);
+      const admAppRes = await getApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${appAId}`),
+        { params: Promise.resolve({ id: appAId }) }
+      );
+      const admAppRemarksJson = await admAppRes.json();
+      const admRemarks: any[] = admAppRemarksJson.remarks || [];
+      const adminSeesCorrection = admRemarks.some((r) => r.body === correctionReqBody);
+      const adminSeesInternalNote = admRemarks.some((r) => r.body === internalNoteBody);
+
+      assert(
+        studentSeesCorrection && !studentSeesInternalNote && adminSeesCorrection && adminSeesInternalNote,
+        "a correction_request remark marked visible_to_student appears to the student; an internal note does not",
+        "test_db"
+      );
+
+      // --- TEST 24 (Phase 3d Item 6): Wizard Steps 1 to 7 Save API Test Against Real Database ---
+      const emailWiz = `test-wizard-${Date.now()}@sit.test`;
+      const userWiz = await testAdmin.auth.admin.createUser({
+        email: emailWiz,
+        password: "TestPassword123!@#",
+        email_confirm: true,
+        user_metadata: { full_name: "WIZARD STUDENT", mobile: "9880199999" },
+      });
+      if (userWiz.data.user) cleanupUserIds.push(userWiz.data.user.id);
+      await testAdmin.from("profiles").update({ role: "student" }).eq("id", userWiz.data.user!.id);
+
+      const wizAppId = crypto.randomUUID();
+      cleanupAppIds.push(wizAppId);
+      const wizBankRaw = "889977665544";
+      const { error: wizInitErr } = await testAdmin.from("applications").insert({
+        id: wizAppId,
+        ref_no: `SIT-WIZ-${Date.now().toString().slice(-6)}`,
+        cycle_id: cycle.id,
+        student_id: userWiz.data.user!.id,
+        status: "draft",
+        current_step: 1,
+        data: {
+          scholarship_code: "MNC",
+        },
+      });
+      if (wizInitErr) throw new Error(`Failed to initialize wizard app: ${wizInitErr.message}`);
+
+      await setAuthenticatedSession(emailWiz, "TestPassword123!@#");
+      const { data: initDraftRow } = await testAdmin.from("applications").select("updated_at").eq("id", wizAppId).single();
+      let wizUpdatedAt = initDraftRow!.updated_at;
+
+      // Step 1: Personal Details
+      const s1Res = await patchApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${wizAppId}`, {
+          method: "PATCH",
+          headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+          body: JSON.stringify({
+            step: 1,
+            stepData: {
+              scholarship_code: "MNC",
+              full_name: "WIZARD STUDENT",
+              usn: "1SI23CS099",
+              dob: "2004-08-20",
+              nationality: "Indian",
+              father_or_guardian_name: "WIZARD FATHER",
+              address: "Kaveri Hostel, SIT, Tumakuru",
+              pincode: "572103",
+              mobile: "9880199999",
+              email: emailWiz,
+            },
+            last_updated_at: wizUpdatedAt,
+          }),
+        }),
+        { params: Promise.resolve({ id: wizAppId }) }
+      );
+      const s1Json = await s1Res.json();
+      wizUpdatedAt = s1Json.application?.updated_at || wizUpdatedAt;
+
+      // Step 2: Family & Income Details
+      const s2Res = await patchApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${wizAppId}`, {
+          method: "PATCH",
+          headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+          body: JSON.stringify({
+            step: 2,
+            stepData: {
+              parent_occupation: "Private Service",
+              family_annual_income: 150000,
+              income_cert_issue_date: "2025-05-15",
+            },
+            last_updated_at: wizUpdatedAt,
+          }),
+        }),
+        { params: Promise.resolve({ id: wizAppId }) }
+      );
+      const s2Json = await s2Res.json();
+      wizUpdatedAt = s2Json.application?.updated_at || wizUpdatedAt;
+
+      // Step 3: Academic Details
+      const s3Res = await patchApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${wizAppId}`, {
+          method: "PATCH",
+          headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+          body: JSON.stringify({
+            step: 3,
+            stepData: {
+              admitted_through_cet: true,
+              last_exam_passed: "II PUC",
+              marks_obtained: 560,
+              marks_gross_total: 600,
+              course: "Computer Science and Engineering",
+              year_of_study: 1,
+              semester: 1,
+              cgpa: 9.3,
+              has_backlog_history: false,
+              course_duration_years: 4,
+              final_exam_month_year: "2028-06",
+            },
+            last_updated_at: wizUpdatedAt,
+          }),
+        }),
+        { params: Promise.resolve({ id: wizAppId }) }
+      );
+      const s3Json = await s3Res.json();
+      wizUpdatedAt = s3Json.application?.updated_at || wizUpdatedAt;
+
+      // Step 4: Financial & Requirements
+      const s4Res = await patchApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${wizAppId}`, {
+          method: "PATCH",
+          headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+          body: JSON.stringify({
+            step: 4,
+            stepData: {
+              annual_fee: 98000,
+              applied_earlier: false,
+              getting_other_scholarship: false,
+              scholarship_amount_required_per_month: 2500,
+            },
+            last_updated_at: wizUpdatedAt,
+          }),
+        }),
+        { params: Promise.resolve({ id: wizAppId }) }
+      );
+      const s4Json = await s4Res.json();
+      wizUpdatedAt = s4Json.application?.updated_at || wizUpdatedAt;
+
+      // Step 5: Bank Details
+      const s5Res = await patchApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${wizAppId}`, {
+          method: "PATCH",
+          headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+          body: JSON.stringify({
+            step: 5,
+            stepData: {
+              bank_acc_holder_name: "WIZARD STUDENT",
+              bank_acc_no: wizBankRaw,
+              confirm_bank_acc_no: wizBankRaw,
+              bank_name: "State Bank of India",
+              bank_branch: "SIT Campus, Tumakuru",
+              bank_ifsc: "SBIN0040523",
+            },
+            last_updated_at: wizUpdatedAt,
+          }),
+        }),
+        { params: Promise.resolve({ id: wizAppId }) }
+      );
+      const s5Json = await s5Res.json();
+      wizUpdatedAt = s5Json.application?.updated_at || wizUpdatedAt;
+
+      // Step 6: Documents Enclosures Milestone
+      const s6Res = await patchApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${wizAppId}`, {
+          method: "PATCH",
+          headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+          body: JSON.stringify({
+            step: 6,
+            stepData: {},
+            last_updated_at: wizUpdatedAt,
+          }),
+        }),
+        { params: Promise.resolve({ id: wizAppId }) }
+      );
+      const s6Json = await s6Res.json();
+      wizUpdatedAt = s6Json.application?.updated_at || wizUpdatedAt;
+
+      // Step 7: Declarations
+      const s7Res = await patchApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${wizAppId}`, {
+          method: "PATCH",
+          headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+          body: JSON.stringify({
+            step: 7,
+            stepData: {
+              declaration_accepted: true,
+            },
+            last_updated_at: wizUpdatedAt,
+          }),
+        }),
+        { params: Promise.resolve({ id: wizAppId }) }
+      );
+      const s7Json = await s7Res.json();
+
+      // Verify all steps saved and persistent via GET /api/applications/[id]
+      const verifyWizRes = await getApplicationRoute(
+        new Request(`http://localhost:3000/api/applications/${wizAppId}`),
+        { params: Promise.resolve({ id: wizAppId }) }
+      );
+      const verifyWizJson = await verifyWizRes.json();
+      const savedApp = verifyWizJson.application;
+
+      const stepsAllPassed =
+        s1Res.status === 200 &&
+        s2Res.status === 200 &&
+        s3Res.status === 200 &&
+        s4Res.status === 200 &&
+        s5Res.status === 200 &&
+        s6Res.status === 200 &&
+        s7Res.status === 200 &&
+        verifyWizRes.status === 200 &&
+        savedApp.data.full_name === "WIZARD STUDENT" &&
+        savedApp.data.usn === "1SI23CS099" &&
+        savedApp.data.family_annual_income === 150000 &&
+        savedApp.data.cgpa === 9.3 &&
+        savedApp.data.annual_fee === 98000 &&
+        savedApp?.data?.bank_acc_no === wizBankRaw &&
+        savedApp?.data?.declaration_accepted === true &&
+        savedApp?.current_step >= 5;
+
+      if (!stepsAllPassed) {
+        console.error("TEST 24 DEBUG FAILURE:", {
+          s1: s1Res.status,
+          s1Json,
+          s2: s2Res.status,
+          s2Json,
+          s3: s3Res.status,
+          s3Json,
+          s4: s4Res.status,
+          s4Json,
+          s5: s5Res.status,
+          s5Json,
+          s6: s6Res.status,
+          s6Json,
+          s7: s7Res.status,
+          s7Json,
+          verifyStatus: verifyWizRes.status,
+          savedAppData: savedApp?.data,
+          current_step: savedApp?.current_step,
+        });
+      }
+
+      assert(
+        stepsAllPassed,
+        "saves steps 1 to 7 of the wizard through the API against the real database",
         "test_db"
       );
     } finally {
@@ -2404,6 +2770,8 @@ async function runTests() {
     recordSkipped("reviewers get 403 on PDF route, student owner gets 200 with PDF bytes, and reviewer receives masked bank account", "SKIP_INTEGRATION=1");
     recordSkipped("reviewer with no department gets 403, reviewer with ME sees only ME and rejects 'me' substring, admin sees all, and submitted app stores normalized department", "SKIP_INTEGRATION=1");
     recordSkipped("creating staff user sends Supabase Auth email invite, sets must_change_password: false, rejects invalid department, while bootstrap admin requires must_change_password: true", "SKIP_INTEGRATION=1");
+    recordSkipped("a correction_request remark marked visible_to_student appears to the student; an internal note does not", "SKIP_INTEGRATION=1");
+    recordSkipped("saves steps 1 to 7 of the wizard through the API against the real database", "SKIP_INTEGRATION=1");
   }
 
   // 10. File Upload Safety & Magic-Byte Sniffing Tests (Part B1)
@@ -2701,6 +3069,59 @@ async function runTests() {
       whitespaceToken.success === false,
       "Turnstile: Whitespace-only token fails verification"
     );
+
+    // F. Loopback IP suppression and test-key handling ONLY apply when NODE_ENV !== 'production'
+    (process.env as any).NODE_ENV = "production";
+    process.env.TURNSTILE_SECRET_KEY = "test-secret-key-prod";
+    process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY = "test-site-key-prod";
+    let capturedBodyProd: any = null;
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url: any, init: any) => {
+      if (String(url).includes("turnstile")) {
+        capturedBodyProd = init?.body;
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return origFetch(url, init);
+    };
+
+    try {
+      // In production, remoteip is appended even for 127.0.0.1
+      await verifyTurnstileToken("valid-user-token", "127.0.0.1");
+      const prodIncludesLoopback = (capturedBodyProd as any)?.get?.("remoteip") === "127.0.0.1";
+
+      // In development, loopback IP is suppressed from remoteip
+      (process.env as any).NODE_ENV = "development";
+      let capturedBodyDev: any = null;
+      globalThis.fetch = async (url: any, init: any) => {
+        if (String(url).includes("turnstile")) {
+          capturedBodyDev = init?.body;
+          return new Response(JSON.stringify({ success: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return origFetch(url, init);
+      };
+      process.env.TURNSTILE_SECRET_KEY = "real-secret-key";
+      process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY = "real-site-key";
+      await verifyTurnstileToken("valid-user-token", "127.0.0.1");
+      const devSuppressedLoopback = (capturedBodyDev as any)?.get?.("remoteip") == null;
+
+      // In development, test keys immediately succeed without calling siteverify
+      process.env.TURNSTILE_SECRET_KEY = "1x0000000000000000000000000000000AA";
+      process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY = "1x00000000000000000000AA";
+      const devTestKeyBypass = await verifyTurnstileToken("test-token", "127.0.0.1");
+
+      assert(
+        prodIncludesLoopback && devSuppressedLoopback && devTestKeyBypass.success === true,
+        "Turnstile: loopback IP suppression and test-key handling only apply when NODE_ENV !== 'production'"
+      );
+    } finally {
+      globalThis.fetch = origFetch;
+    }
   } finally {
     (process.env as any).NODE_ENV = origTurnstileEnv.NODE_ENV;
     if (origTurnstileEnv.TURNSTILE_SECRET_KEY !== undefined) {

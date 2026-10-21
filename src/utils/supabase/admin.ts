@@ -12,6 +12,27 @@ function cleanSupabaseUrl(url?: string): string {
   }
 }
 
+const resilientFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await fetch(input, init);
+    } catch (err: unknown) {
+      const error = err as { message?: string; code?: string };
+      if (
+        attempt < 2 &&
+        (error?.message?.includes("fetch failed") ||
+          error?.message?.includes("ECONNRESET") ||
+          error?.code === "ECONNRESET")
+      ) {
+        await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
+  return fetch(input, init);
+};
+
 export function createAdminClient(customUrl?: string, customSecretKey?: string): SupabaseClient {
   const supabaseUrl = cleanSupabaseUrl(customUrl || process.env.NEXT_PUBLIC_SUPABASE_URL);
   const supabaseSecretKey = (customSecretKey || process.env.SUPABASE_SECRET_KEY)?.trim();
@@ -26,6 +47,9 @@ export function createAdminClient(customUrl?: string, customSecretKey?: string):
     auth: {
       autoRefreshToken: false,
       persistSession: false,
+    },
+    global: {
+      fetch: resilientFetch,
     },
   });
 }

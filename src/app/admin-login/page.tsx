@@ -1,11 +1,9 @@
 "use client";
 
 import React, { useState } from "react";
-import { useRouter } from "next/navigation";
 import { ShieldAlert, AlertCircle, ArrowRight } from "lucide-react";
 
 export default function AdminLoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -39,13 +37,14 @@ export default function AdminLoginPage() {
 
       // Check if temporary initial password must be changed
       if (data.mustChangePassword) {
-        router.push("/change-password");
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- hard redirect keeps auth cookies
+        window.location.href = "/change-password";
         return;
       }
 
       // Elevate session: route staff to MFA enrolment or verification
-      router.push("/admin-login/mfa");
-      router.refresh();
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- hard redirect keeps auth cookies
+      window.location.href = "/admin-login/mfa";
     } catch {
       setLoading(false);
       setError("Connection failure. Please check network and try again.");

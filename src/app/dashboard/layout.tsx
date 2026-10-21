@@ -16,6 +16,9 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }) {
   const session = await getCurrentSession();
+  if (!session) {
+    redirect('/login');
+  }
   if (session?.mustChangePassword) {
     redirect('/change-password');
   }

@@ -2,12 +2,10 @@
 
 import React, { useState, useRef } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useLanguage } from '@/components/LanguageToggle';
 import { Turnstile, TurnstileRef } from '@/components/Turnstile';
 
 export default function LoginForm() {
-  const router = useRouter();
   const { t } = useLanguage();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -61,16 +59,25 @@ export default function LoginForm() {
         turnstileRef.current?.reset();
         setTurnstileToken('');
       } else {
+        const params = new URLSearchParams(window.location.search);
+        const redirectParam = params.get('redirect');
+        const safeRedirect = redirectParam && redirectParam.startsWith('/') && !redirectParam.startsWith('//')
+          ? redirectParam
+          : null;
+
+        let targetUrl = '/dashboard';
         if (data.mustChangePassword) {
-          router.push('/change-password');
+          targetUrl = '/change-password';
         } else if (data.needsConsent) {
-          router.push('/accept-terms');
-        } else if (data.user.role === 'admin' || data.user.role === 'reviewer') {
-          router.push('/admin');
-        } else {
-          router.push('/dashboard');
+          targetUrl = '/accept-terms';
+        } else if (safeRedirect) {
+          targetUrl = safeRedirect;
+        } else if (data.user?.role === 'admin' || data.user?.role === 'reviewer') {
+          targetUrl = '/admin';
         }
-        router.refresh();
+
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- hard redirect keeps auth cookies
+        window.location.href = targetUrl;
       }
     } catch {
       setLoading(false);

@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import {
   ShieldCheck,
   Smartphone,
@@ -36,7 +35,6 @@ interface MfaStatusResponse {
 }
 
 export default function AdminMfaPage() {
-  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<MfaStatusResponse | null>(null);
 
@@ -68,11 +66,13 @@ export default function AdminMfaPage() {
       const res = await fetch("/api/auth/mfa/status");
       if (!res.ok) {
         if (res.status === 401) {
-          router.push("/admin-login");
+          // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- hard redirect keeps auth cookies
+          window.location.href = "/admin-login";
           return;
         }
         if (res.status === 403) {
-          router.push("/login");
+          // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- hard redirect keeps auth cookies
+          window.location.href = "/login";
           return;
         }
         throw new Error("Failed to load MFA status");
@@ -96,7 +96,7 @@ export default function AdminMfaPage() {
       setLoading(false);
       setVerifyError(err instanceof Error ? err.message : "Error connecting to authentication service");
     }
-  }, [router]);
+  }, []);
 
   useEffect(() => {
     loadStatus();
@@ -197,8 +197,8 @@ export default function AdminMfaPage() {
       }
 
       setVerifySuccess(true);
-      router.push("/admin");
-      router.refresh();
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- hard redirect keeps auth cookies
+      window.location.href = "/admin";
     } catch {
       setVerifyLoading(false);
       setVerifyError("Verification failed due to connection error. Please try again.");
@@ -548,7 +548,10 @@ export default function AdminMfaPage() {
               <div className="pt-2">
                 <button
                   type="button"
-                  onClick={() => router.push("/admin")}
+                  onClick={() => {
+                    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- hard redirect keeps auth cookies
+                    window.location.href = "/admin";
+                  }}
                   className="w-full py-2.5 px-4 bg-[#AC3D47] hover:bg-[#8e323b] text-white rounded text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
                 >
                   Enter Administrative Console <ArrowRight className="w-3.5 h-3.5" />

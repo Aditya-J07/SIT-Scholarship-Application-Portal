@@ -37,10 +37,18 @@ export async function getCurrentSession(): Promise<SessionPayload | null> {
     }
 
     const supabase = await createClient();
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser();
+    let authUserRes = await supabase.auth.getUser();
+    if (
+      authUserRes.error &&
+      (authUserRes.error.message?.includes("fetch failed") ||
+        authUserRes.error.message?.includes("ECONNRESET") ||
+        authUserRes.error.status === 502 ||
+        authUserRes.error.status === 503)
+    ) {
+      await new Promise((r) => setTimeout(r, 400));
+      authUserRes = await supabase.auth.getUser();
+    }
+    const { data: { user } = { user: null }, error } = authUserRes;
 
     if (error || !user) {
       return null;

@@ -13,6 +13,7 @@ const ALLOWED_ACTIONS = new Set([
   'reject',
   'shortlist',
   'correction',
+  'needs_correction',
   'under_review',
 ]);
 
@@ -161,7 +162,7 @@ export async function POST(
     } else if (action === 'shortlist') {
       targetStatus = 'shortlisted';
       notifType = 'SHORTLISTED_FOR_AWARD';
-    } else if (action === 'correction') {
+    } else if (action === 'correction' || action === 'needs_correction') {
       targetStatus = 'needs_correction';
       notifType = 'CORRECTION_REQUESTED';
     } else if (action === 'under_review') {
@@ -175,7 +176,7 @@ export async function POST(
       );
     }
 
-    if (action === 'correction' && (!remark || remark.trim().length === 0)) {
+    if ((action === 'correction' || action === 'needs_correction') && (!remark || remark.trim().length === 0)) {
       return NextResponse.json(
         { error: { message: 'Please specify the exact correction instructions for the student' } },
         { status: 400 }
@@ -226,14 +227,16 @@ export async function POST(
 
     // Record Remark thread entry
     if (effectiveRemark) {
+      const isCorrection = action === 'correction' || action === 'needs_correction';
       await db.addRemark({
         id: crypto.randomUUID(),
         application_id: id,
         author_id: session.userId,
         author_name: session.fullName,
         author_role: session.role,
-        kind: action === 'correction' ? 'correction_request' : 'decision',
+        kind: isCorrection ? 'correction_request' : 'decision',
         body: effectiveRemark,
+        visible_to_student: true,
         created_at: new Date().toISOString(),
       });
     }
@@ -273,6 +276,7 @@ export async function POST(
     return NextResponse.json({ success: true, application: updated });
   } catch (error: unknown) {
     console.error('Decision update error:', error);
-    return NextResponse.json({ error: { message: 'Failed to process decision' } }, { status: 500 });
+    const msg = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: { message: msg || 'Failed to process decision' } }, { status: 500 });
   }
 }

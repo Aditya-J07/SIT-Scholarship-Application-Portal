@@ -93,12 +93,37 @@ export async function POST(request: Request) {
       );
 
       if (inviteError || !authData.user) {
-        return NextResponse.json(
-          { error: { message: inviteError?.message || "Failed to send staff invitation email" } },
-          { status: 400 }
-        );
+        // If Supabase SMTP rate limit is exceeded on inviteUserByEmail,
+        // fallback to admin.createUser so staff provisioning does not fail completely.
+        if (
+          inviteError?.message?.toLowerCase().includes("rate limit") ||
+          (inviteError as { code?: string })?.code === "over_email_send_rate_limit"
+        ) {
+          const { data: createData, error: createErr } = await adminSupabase.auth.admin.createUser({
+            email: normalizedEmail,
+            email_confirm: false,
+            user_metadata: {
+              full_name: full_name.trim().toUpperCase(),
+              role,
+              department: normDept || undefined,
+            },
+          });
+          if (createErr || !createData.user) {
+            return NextResponse.json(
+              { error: { message: createErr?.message || inviteError?.message || "Failed to provision staff account" } },
+              { status: 400 }
+            );
+          }
+          authUserId = createData.user.id;
+        } else {
+          return NextResponse.json(
+            { error: { message: inviteError?.message || "Failed to send staff invitation email" } },
+            { status: 400 }
+          );
+        }
+      } else {
+        authUserId = authData.user.id;
       }
-      authUserId = authData.user.id;
     } else {
       // Student accounts created with standard password
       const password = body.password;
@@ -165,9 +190,10 @@ export async function POST(request: Request) {
       },
     });
   } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
     console.error("Create/Invite user error:", err);
     return NextResponse.json(
-      { error: { message: "Internal server error" } },
+      { error: { message: msg || "Internal server error" } },
       { status: 500 }
     );
   }
