@@ -102,11 +102,10 @@ export async function POST(request: Request) {
     });
 
     if (signUpError) {
-      // Propagate sign‑up error – fallback creation via admin client is removed per Phase 3d.
-      console.warn("[Register] signUp error:", signUpError.message);
+      console.warn("[Register] signUp provider error:", signUpError.code || "SIGNUP_ERROR");
       return NextResponse.json(
-        { error: { message: signUpError.message } },
-        { status: signUpError.status ?? 400 }
+        { error: { message: "Unable to complete registration. Please check your details and try again." } },
+        { status: 400 }
       );
     } else if (authData.user?.id) {
       userId = authData.user.id;
@@ -124,7 +123,7 @@ export async function POST(request: Request) {
           })
           .eq("id", userId);
       } catch (consentErr) {
-        console.warn("[Register] Failed to record consent timestamp:", consentErr);
+        console.warn("[Register] Failed to record consent timestamp:", consentErr instanceof Error ? consentErr.name : "ConsentError");
       }
 
       await db.logAudit({
@@ -145,7 +144,7 @@ export async function POST(request: Request) {
         "If this email can be registered, a verification message has been sent. Please check your inbox.",
     });
   } catch (error: unknown) {
-    console.error("Registration error:", error);
+    console.error("[Register] Registration error:", error instanceof Error ? error.name : "UnknownError");
     return NextResponse.json(
       { error: { message: "An unexpected error occurred during registration. Please try again." } },
       { status: 500 }

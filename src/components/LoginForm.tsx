@@ -4,6 +4,7 @@ import React, { useState, useRef } from 'react';
 import Link from 'next/link';
 import { useLanguage } from '@/components/LanguageToggle';
 import { Turnstile, TurnstileRef } from '@/components/Turnstile';
+import { validateRedirectPath } from '@/lib/auth/redirect-validator';
 
 export default function LoginForm() {
   const { t } = useLanguage();
@@ -61,9 +62,7 @@ export default function LoginForm() {
       } else {
         const params = new URLSearchParams(window.location.search);
         const redirectParam = params.get('redirect');
-        const safeRedirect = redirectParam && redirectParam.startsWith('/') && !redirectParam.startsWith('//')
-          ? redirectParam
-          : null;
+        const safeRedirect = redirectParam ? validateRedirectPath(redirectParam, '') || null : null;
 
         let targetUrl = '/dashboard';
         if (data.mustChangePassword) {

@@ -15,7 +15,7 @@ export async function GET(_request?: Request) {
     const users = await db.listUsers();
     return NextResponse.json({ users });
   } catch (err: unknown) {
-    console.error("List users error:", err);
+    console.error("[Admin Users] List users error:", err instanceof Error ? err.name : "UnknownError");
     return NextResponse.json(
       { error: { message: "Internal server error" } },
       { status: 500 }
@@ -77,7 +77,7 @@ export async function POST(request: Request) {
     let authUserId: string;
 
     // Phase 3c Item 5: Use Supabase inviteUserByEmail for staff accounts (admin, reviewer)
-    // so the person sets their own password.
+    // so the person sets their own password. Role is written exclusively to profiles by server.
     if (role === "admin" || role === "reviewer") {
       const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
       const { data: authData, error: inviteError } = await adminSupabase.auth.admin.inviteUserByEmail(
@@ -86,41 +86,37 @@ export async function POST(request: Request) {
           redirectTo: `${siteUrl}/reset-password`,
           data: {
             full_name: full_name.trim().toUpperCase(),
-            role,
             department: normDept || undefined,
           },
         }
       );
 
       if (inviteError || !authData.user) {
-        // If Supabase SMTP rate limit is exceeded on inviteUserByEmail,
-        // fallback to admin.createUser so staff provisioning does not fail completely.
-        if (
-          inviteError?.message?.toLowerCase().includes("rate limit") ||
-          (inviteError as { code?: string })?.code === "over_email_send_rate_limit"
-        ) {
-          const { data: createData, error: createErr } = await adminSupabase.auth.admin.createUser({
-            email: normalizedEmail,
-            email_confirm: false,
-            user_metadata: {
-              full_name: full_name.trim().toUpperCase(),
-              role,
-              department: normDept || undefined,
-            },
-          });
-          if (createErr || !createData.user) {
-            return NextResponse.json(
-              { error: { message: createErr?.message || inviteError?.message || "Failed to provision staff account" } },
-              { status: 400 }
-            );
-          }
-          authUserId = createData.user.id;
-        } else {
+        const errMsg = inviteError?.message || "";
+        const errCode = (inviteError as { code?: string })?.code || "";
+        const isRateLimit =
+          errCode === "over_email_send_rate_limit" ||
+          errMsg.toLowerCase().includes("rate limit") ||
+          errMsg.toLowerCase().includes("over_email_send_rate_limit");
+
+        if (isRateLimit) {
+          console.error("[Admin Users] Email invite rate limit reached for Supabase default mailer:", errCode || "RATE_LIMIT");
           return NextResponse.json(
-            { error: { message: inviteError?.message || "Failed to send staff invitation email" } },
-            { status: 400 }
+            {
+              error: {
+                message:
+                  "Invitation email delivery limit reached on default SMTP service. Please configure custom SMTP provider settings in Supabase dashboard and retry.",
+              },
+            },
+            { status: 503 }
           );
         }
+
+        console.error("[Admin Users] Failed to send staff invitation email:", errCode || "INVITE_FAILED");
+        return NextResponse.json(
+          { error: { message: "Failed to send staff invitation email" } },
+          { status: 400 }
+        );
       } else {
         authUserId = authData.user.id;
       }
@@ -140,8 +136,12 @@ export async function POST(request: Request) {
       });
 
       if (createAuthError || !authData.user) {
+        console.error(
+          "[Admin Users] Failed to create user account:",
+          createAuthError ? (createAuthError as { code?: string }).code || "CREATE_USER_ERROR" : "NO_USER"
+        );
         return NextResponse.json(
-          { error: { message: createAuthError?.message || "Failed to create user account" } },
+          { error: { message: "Failed to create user account" } },
           { status: 400 }
         );
       }
@@ -190,10 +190,9 @@ export async function POST(request: Request) {
       },
     });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("Create/Invite user error:", err);
+    console.error("[Admin Users] Create/Invite user error:", err instanceof Error ? err.name : "UnknownError");
     return NextResponse.json(
-      { error: { message: msg || "Internal server error" } },
+      { error: { message: "Internal server error" } },
       { status: 500 }
     );
   }

@@ -706,22 +706,21 @@ export const db = {
       .single();
 
     if (error) {
-      if (
-        (error.code === "PGRST204" || error.code === "42703" || error.message?.includes("visible_to_student")) &&
-        "visible_to_student" in remark
-      ) {
-        const fallbackRemark = { ...remark };
-        delete (fallbackRemark as Record<string, unknown>).visible_to_student;
-        const retry = await supabase.from("remarks").insert(fallbackRemark).select("*").single();
-        if (!retry.error) {
-          return { ...(retry.data as RemarkRecord), visible_to_student: remark.visible_to_student };
-        }
-      }
       console.error("[DB] addRemark error:", error.message);
       throw new Error(`Failed to add remark: ${error.message}`);
     }
 
     return data as RemarkRecord;
+  },
+
+  checkVisibleToStudentColumn: async (): Promise<boolean> => {
+    const supabase = getAdminClient();
+    const { error } = await supabase.from("remarks").select("visible_to_student").limit(1);
+    if (error) {
+      console.error("[DB] visible_to_student column check failed:", error.message);
+      return false;
+    }
+    return true;
   },
 
   // --------------------------------------------------------------------------

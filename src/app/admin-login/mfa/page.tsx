@@ -12,6 +12,7 @@ import {
   AlertCircle,
   RefreshCw,
 } from "lucide-react";
+import { validateRedirectPath } from "@/lib/auth/redirect-validator";
 
 interface TotpFactor {
   id: string;
@@ -66,8 +67,13 @@ export default function AdminMfaPage() {
       const res = await fetch("/api/auth/mfa/status");
       if (!res.ok) {
         if (res.status === 401) {
-          // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- hard redirect keeps auth cookies
-          window.location.href = "/admin-login";
+          const params = new URLSearchParams(window.location.search);
+          const redirectParam = params.get("redirect");
+          const safeRedirect = redirectParam ? validateRedirectPath(redirectParam, "") : "";
+          const target = safeRedirect
+            ? `/admin-login?redirect=${encodeURIComponent(safeRedirect)}`
+            : "/admin-login";
+          window.location.href = target;
           return;
         }
         if (res.status === 403) {
@@ -197,8 +203,10 @@ export default function AdminMfaPage() {
       }
 
       setVerifySuccess(true);
-      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- hard redirect keeps auth cookies
-      window.location.href = "/admin";
+      const params = new URLSearchParams(window.location.search);
+      const redirectParam = params.get("redirect");
+      const targetUrl = redirectParam ? validateRedirectPath(redirectParam, "/admin") : "/admin";
+      window.location.href = targetUrl;
     } catch {
       setVerifyLoading(false);
       setVerifyError("Verification failed due to connection error. Please try again.");
@@ -549,8 +557,10 @@ export default function AdminMfaPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- hard redirect keeps auth cookies
-                    window.location.href = "/admin";
+                    const params = new URLSearchParams(window.location.search);
+                    const redirectParam = params.get("redirect");
+                    const targetUrl = redirectParam ? validateRedirectPath(redirectParam, "/admin") : "/admin";
+                    window.location.href = targetUrl;
                   }}
                   className="w-full py-2.5 px-4 bg-[#AC3D47] hover:bg-[#8e323b] text-white rounded text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
                 >

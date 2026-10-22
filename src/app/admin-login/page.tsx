@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { ShieldAlert, AlertCircle, ArrowRight } from "lucide-react";
+import { validateRedirectPath } from "@/lib/auth/redirect-validator";
 
 export default function AdminLoginPage() {
   const [email, setEmail] = useState("");
@@ -43,8 +44,13 @@ export default function AdminLoginPage() {
       }
 
       // Elevate session: route staff to MFA enrolment or verification
-      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- hard redirect keeps auth cookies
-      window.location.href = "/admin-login/mfa";
+      const params = new URLSearchParams(window.location.search);
+      const redirectParam = params.get("redirect");
+      const safeRedirect = redirectParam ? validateRedirectPath(redirectParam, "") : "";
+      const mfaTarget = safeRedirect
+        ? `/admin-login/mfa?redirect=${encodeURIComponent(safeRedirect)}`
+        : "/admin-login/mfa";
+      window.location.href = mfaTarget;
     } catch {
       setLoading(false);
       setError("Connection failure. Please check network and try again.");

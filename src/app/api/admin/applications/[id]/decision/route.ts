@@ -275,8 +275,7 @@ export async function POST(
 
     return NextResponse.json({ success: true, application: updated });
   } catch (error: unknown) {
-    console.error('Decision update error:', error);
-    const msg = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: { message: msg || 'Failed to process decision' } }, { status: 500 });
+    console.error('[Admin Decision] Failed to process decision:', error instanceof Error ? error.name : 'UnknownError');
+    return NextResponse.json({ error: { message: 'Failed to process decision' } }, { status: 500 });
   }
 }

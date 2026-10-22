@@ -12,7 +12,22 @@ function cleanSupabaseUrl(url?: string): string {
   }
 }
 
-const resilientFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+function isIdempotentMethod(input: RequestInfo | URL, init?: RequestInit): boolean {
+  let method = init?.method;
+  if (!method && typeof input === "object" && input !== null && "method" in input) {
+    method = (input as Request).method;
+  }
+  const upper = (method || "GET").toUpperCase();
+  return upper === "GET" || upper === "HEAD";
+}
+
+export const resilientFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  // Only idempotent read requests (GET, HEAD) are safe to retry across network drops.
+  // Mutating write requests (POST, PUT, PATCH, DELETE) fail immediately to prevent duplicate writes or side effects.
+  if (!isIdempotentMethod(input, init)) {
+    return fetch(input, init);
+  }
+
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       return await fetch(input, init);

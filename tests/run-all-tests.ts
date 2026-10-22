@@ -124,12 +124,15 @@ import { GET as getSessionRoute } from "../src/app/api/auth/session/route";
 import { POST as logoutRoute } from "../src/app/api/auth/logout/route";
 import { GET as getProfileRoute } from "../src/app/api/profile/route";
 import { POST as loginRoute } from "../src/app/api/auth/login/route";
-import { getAdminClient, resetAdminClient } from "../src/utils/supabase/admin";
+import { getAdminClient, resetAdminClient, resilientFetch } from "../src/utils/supabase/admin";
 import { createClient as createServerClient } from "../src/utils/supabase/server";
 import { verifyTurnstileToken } from "../src/lib/auth/turnstile";
 import { canReviewerAccessDepartment } from "../src/lib/auth/admin-guard";
 import { normalizeDepartment, SIT_DEPARTMENTS } from "../src/lib/constants/departments";
 import { db } from "../src/lib/db";
+import fs from "fs";
+import path from "path";
+import { POST as registerRoute } from "../src/app/api/auth/register/route";
 
 let passedTests = 0;
 let totalTests = 0;
@@ -327,15 +330,67 @@ async function runTests() {
   });
   assert(!invalidIfsc.success, "Invalid bank IFSC rejected");
 
-  // 1b. Redirect Validator Unit Tests (H4)
-  console.log("\n--- 1b. Redirect Validator Unit Tests (H4) ---");
+  // 1b. Redirect Validator Unit Tests (H4 & Phase 3e Item 1)
+  console.log("\n--- 1b. Redirect Validator Unit Tests (H4 & Phase 3e Item 1) ---");
   assert(validateRedirectPath("/dashboard") === "/dashboard", "Valid relative path '/dashboard' accepted");
-  assert(validateRedirectPath("//evil.com") === "/dashboard", "Protocol-relative URL '//evil.com' rejected and falls back");
   assert(validateRedirectPath("/\\evil.com") === "/dashboard", "Backslash-prefixed path '/\\evil.com' rejected");
+  assert(validateRedirectPath("/%5Cevil.com") === "/dashboard", "Percent-encoded backslash '/%5Cevil.com' rejected");
+  assert(validateRedirectPath("//evil.com") === "/dashboard", "Protocol-relative URL '//evil.com' rejected and falls back");
+  assert(validateRedirectPath("javascript:alert(1)") === "/dashboard", "JavaScript pseudo-protocol 'javascript:alert(1)' rejected");
+  assert(validateRedirectPath("/ok?x=1") === "/ok?x=1", "Valid relative path with query string '/ok?x=1' accepted");
   assert(validateRedirectPath("@evil.com") === "/dashboard", "UserInfo delimiter '@evil.com' rejected");
   assert(validateRedirectPath(".evil.com") === "/dashboard", "Dot-relative path '.evil.com' rejected");
   assert(validateRedirectPath("https://evil.com") === "/dashboard", "Absolute URL 'https://evil.com' rejected");
   assert(validateRedirectPath("/x?y=//z") === "/x?y=//z", "Valid relative path with query containing slashes '/x?y=//z' accepted");
+
+  // Phase 3e Item 1: Test that proves LoginForm uses the shared validator
+  const loginFormSource = fs.readFileSync(path.join(process.cwd(), "src/components/LoginForm.tsx"), "utf8");
+  assert(
+    loginFormSource.includes("import { validateRedirectPath } from '@/lib/auth/redirect-validator'") ||
+    loginFormSource.includes('import { validateRedirectPath } from "@/lib/auth/redirect-validator"'),
+    "LoginForm imports validateRedirectPath from shared redirect-validator"
+  );
+  assert(
+    loginFormSource.includes("validateRedirectPath(redirectParam"),
+    "LoginForm calls validateRedirectPath on the client redirect query parameter"
+  );
+  assert(
+    !loginFormSource.includes("redirectParam.startsWith('/') && !redirectParam.startsWith('//')"),
+    "LoginForm eliminates flawed manual startsWith check that allowed '/\\evil.com'"
+  );
+
+  // Phase 3e Item 5: Test that resilientFetch retries GET but throws immediately on write mutations
+  console.log("\n--- 1c. ResilientFetch Method Safety Unit Tests (Phase 3e Item 5) ---");
+  const originalGlobalFetch = globalThis.fetch;
+  try {
+    let mockFetchCalls = 0;
+    globalThis.fetch = async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      mockFetchCalls++;
+      if (mockFetchCalls < 2) {
+        const err = new Error("fetch failed: ECONNRESET");
+        (err as any).code = "ECONNRESET";
+        throw err;
+      }
+      return new Response(JSON.stringify({ success: true }), { status: 200 });
+    };
+
+    // 1. GET read request retries on transient connection error
+    mockFetchCalls = 0;
+    const getRes = await resilientFetch("http://localhost:3000/api/mock-read", { method: "GET" });
+    assert(getRes.status === 200 && mockFetchCalls === 2, "resilientFetch retries idempotent GET request on transient network reset");
+
+    // 2. POST write mutation does NOT retry and fails fast
+    mockFetchCalls = 0;
+    let postThrew = false;
+    try {
+      await resilientFetch("http://localhost:3000/api/mock-write", { method: "POST" });
+    } catch {
+      postThrew = true;
+    }
+    assert(postThrew && mockFetchCalls === 1, "resilientFetch never retries non-idempotent POST mutation and throws immediately on failure");
+  } finally {
+    globalThis.fetch = originalGlobalFetch;
+  }
 
   // 2. Eligibility Engine Tests
   console.log("\n--- 2. Eligibility Engine Tests ---");
@@ -2417,6 +2472,57 @@ async function runTests() {
         "test_db"
       );
 
+      // Phase 3e Item 2: Test that no auth user_metadata contains a role after an invite
+      const inviteDataHasNoRole = !(inviteSpyCalledWith as any)?.options?.data?.role;
+      const { data: authUserCheck } = await testAdmin.auth.admin.getUserById(createdStaffUserId);
+      const authUserMetadataNoRole = !authUserCheck?.user?.user_metadata?.role;
+      assert(
+        inviteDataHasNoRole && authUserMetadataNoRole,
+        "no auth user_metadata contains a role after an invite (role is written only to profiles by server)",
+        "test_db"
+      );
+
+      // Phase 3e Item 2: Test that invite hitting email rate limit returns 503 instructing custom SMTP and does not call createUser
+      let createUserCalledOnRateLimit = false;
+      const origCreateUser = sharedAdmin.auth.admin.createUser.bind(sharedAdmin.auth.admin);
+      sharedAdmin.auth.admin.createUser = (async (attrs: any) => {
+        createUserCalledOnRateLimit = true;
+        return origCreateUser(attrs);
+      }) as any;
+
+      sharedAdmin.auth.admin.inviteUserByEmail = (async () => {
+        return {
+          data: { user: null },
+          error: { message: "over_email_send_rate_limit: rate limit exceeded", code: "over_email_send_rate_limit" } as any,
+        };
+      }) as any;
+
+      const rateLimitInviteReq = new Request("http://localhost:3000/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", origin: "http://localhost:3000" },
+        body: JSON.stringify({
+          email: `rate-limit-staff-${Date.now()}@sit.test`,
+          full_name: "PROFESSOR LIMIT",
+          mobile: "9880112288",
+          role: "reviewer",
+          department: "CSE",
+        }),
+      });
+
+      const rateLimitRes = await postAdminUserRoute(rateLimitInviteReq);
+      const rateLimitJson = await rateLimitRes.json();
+
+      sharedAdmin.auth.admin.createUser = origCreateUser;
+      sharedAdmin.auth.admin.inviteUserByEmail = originalSharedInvite;
+
+      assert(
+        rateLimitRes.status === 503 &&
+        rateLimitJson.error?.message?.includes("custom SMTP") &&
+        !createUserCalledOnRateLimit,
+        "staff invite hitting email rate limit returns 503 with custom SMTP instructions and avoids creating unusable account",
+        "test_db"
+      );
+
       // --- TEST 23 (Phase 3d Item 5): Remarks Visibility Enforcement (visible_to_student) ---
       // A correction_request remark marked visible_to_student appears to the student; an internal note does not.
       await setAuthenticatedSession(emailAdm, "TestPassword123!@#", true);
@@ -2473,6 +2579,91 @@ async function runTests() {
       assert(
         studentSeesCorrection && !studentSeesInternalNote && adminSeesCorrection && adminSeesInternalNote,
         "a correction_request remark marked visible_to_student appears to the student; an internal note does not",
+        "test_db"
+      );
+
+      // Phase 3e Item 3: Health check confirming visible_to_student column exists on remarks table
+      const visibleColExists = await db.checkVisibleToStudentColumn();
+      assert(visibleColExists === true, "health check confirms visible_to_student column exists on remarks table (migration 011)", "test_db");
+
+      // Phase 3e Item 4: Decision route returns generic error on internal failure without leaking database/provider details
+      const origUpdateApp = db.updateApplication;
+      db.updateApplication = async () => {
+        throw new Error("FATAL: PostgreSQL connection terminated unexpectedly (internal stack trace with secret info)");
+      };
+      const decErrReq = new Request(`http://localhost:3000/api/admin/applications/${appAId}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", origin: "http://localhost:3000" },
+        body: JSON.stringify({ action: "accept" }),
+      });
+      const decErrRes = await decisionRoute(decErrReq, { params: Promise.resolve({ id: appAId }) });
+      const decErrJson = await decErrRes.json();
+      db.updateApplication = origUpdateApp;
+
+      assert(
+        decErrRes.status === 500 &&
+        decErrJson.error?.message === "Failed to process decision" &&
+        !JSON.stringify(decErrJson).includes("PostgreSQL"),
+        "decision route returns generic 500 message and never leaks internal errors or SQL details to client",
+        "test_db"
+      );
+
+      // Phase 3e Item 4: Admin users route returns generic error on internal failure without leaking database details
+      const origCreateUserDb = db.createUser;
+      db.createUser = async () => {
+        throw new Error("PostgreSQL foreign key violation on secret internal table");
+      };
+      const usrErrReq = new Request("http://localhost:3000/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", origin: "http://localhost:3000" },
+        body: JSON.stringify({
+          email: `test-err-usr-${Date.now()}@sit.test`,
+          password: "TestPassword123!@#",
+          full_name: "ERROR USER",
+          mobile: "9880112299",
+          role: "student",
+        }),
+      });
+      const usrErrRes = await postAdminUserRoute(usrErrReq);
+      const usrErrJson = await usrErrRes.json();
+      db.createUser = origCreateUserDb;
+
+      assert(
+        usrErrRes.status === 500 &&
+        usrErrJson.error?.message === "Internal server error" &&
+        !JSON.stringify(usrErrJson).includes("PostgreSQL"),
+        "admin users route returns generic 500 message and never leaks internal database errors to client",
+        "test_db"
+      );
+
+      // Phase 3e Item 4: Register route returns generic message on unexpected error without leaking stack or raw errors
+      const regBadReq = new Request("http://localhost:3000/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", origin: "http://localhost:3000" },
+        body: "NOT_VALID_JSON{",
+      });
+      const regBadRes = await registerRoute(regBadReq);
+      const regBadJson = await regBadRes.json();
+      assert(
+        regBadRes.status === 500 &&
+        regBadJson.error?.message === "An unexpected error occurred during registration. Please try again." &&
+        !JSON.stringify(regBadJson).includes("SyntaxError"),
+        "register route returns generic 500 message on unexpected error without leaking syntax or internal errors",
+        "test_db"
+      );
+
+      // Phase 3e Item 4: User-facing validation messages (400) are preserved
+      const valReq = new Request("http://localhost:3000/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", origin: "http://localhost:3000" },
+        body: JSON.stringify({ email: "", full_name: "", role: "" }),
+      });
+      const valRes = await postAdminUserRoute(valReq);
+      const valJson = await valRes.json();
+      assert(
+        valRes.status === 400 &&
+        valJson.error?.message === "Full name, email, and role are required",
+        "admin users route preserves user-facing 400 validation messages",
         "test_db"
       );
 
@@ -2770,7 +2961,14 @@ async function runTests() {
     recordSkipped("reviewers get 403 on PDF route, student owner gets 200 with PDF bytes, and reviewer receives masked bank account", "SKIP_INTEGRATION=1");
     recordSkipped("reviewer with no department gets 403, reviewer with ME sees only ME and rejects 'me' substring, admin sees all, and submitted app stores normalized department", "SKIP_INTEGRATION=1");
     recordSkipped("creating staff user sends Supabase Auth email invite, sets must_change_password: false, rejects invalid department, while bootstrap admin requires must_change_password: true", "SKIP_INTEGRATION=1");
+    recordSkipped("no auth user_metadata contains a role after an invite (role is written only to profiles by server)", "SKIP_INTEGRATION=1");
+    recordSkipped("staff invite hitting email rate limit returns 503 with custom SMTP instructions and avoids creating unusable account", "SKIP_INTEGRATION=1");
     recordSkipped("a correction_request remark marked visible_to_student appears to the student; an internal note does not", "SKIP_INTEGRATION=1");
+    recordSkipped("health check confirms visible_to_student column exists on remarks table (migration 011)", "SKIP_INTEGRATION=1");
+    recordSkipped("decision route returns generic 500 message and never leaks internal errors or SQL details to client", "SKIP_INTEGRATION=1");
+    recordSkipped("admin users route returns generic 500 message and never leaks internal database errors to client", "SKIP_INTEGRATION=1");
+    recordSkipped("register route returns generic 500 message on unexpected error without leaking syntax or internal errors", "SKIP_INTEGRATION=1");
+    recordSkipped("admin users route preserves user-facing 400 validation messages", "SKIP_INTEGRATION=1");
     recordSkipped("saves steps 1 to 7 of the wizard through the API against the real database", "SKIP_INTEGRATION=1");
   }
 
