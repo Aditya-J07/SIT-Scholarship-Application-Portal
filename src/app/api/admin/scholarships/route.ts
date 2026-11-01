@@ -1,24 +1,21 @@
 import { NextResponse } from 'next/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { requireAdmin } from '@/lib/auth/admin-guard';
 import { db } from '@/lib/db';
+import { getClientIp } from '@/lib/rate-limit';
 
-export async function GET() {
-  const session = await getCurrentSession();
-  if (!session || session.role !== 'admin') {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 403 });
-  }
+export async function GET(_request?: Request) {
+  const { errorResponse } = await requireAdmin();
+  if (errorResponse) return errorResponse;
 
-  const scholarships = db.listScholarships();
-  const cycles = db.listCycles();
+  const scholarships = await db.listScholarships();
+  const cycles = await db.listCycles();
 
   return NextResponse.json({ scholarships, cycles });
 }
 
 export async function PUT(request: Request) {
-  const session = await getCurrentSession();
-  if (!session || session.role !== 'admin') {
-    return NextResponse.json({ error: { message: 'Only Admin can update scholarship configuration' } }, { status: 403 });
-  }
+  const { session, errorResponse } = await requireAdmin();
+  if (errorResponse) return errorResponse;
 
   try {
     const body = await request.json();
@@ -28,7 +25,7 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: { message: 'Scholarship ID is required' } }, { status: 400 });
     }
 
-    const updated = db.updateScholarship(id, {
+    const updated = await db.updateScholarship(id, {
       ...(active !== undefined && { active }),
       ...(fee_label && { fee_label }),
       ...(rules && { rules }),
@@ -36,13 +33,16 @@ export async function PUT(request: Request) {
       ...(description && { description }),
     });
 
-    db.logAudit({
+    const clientIp = getClientIp(request);
+
+    await db.logAudit({
       actor_id: session.userId,
       actor_email: session.email,
       action: 'SCHOLARSHIP_CONFIG_UPDATED',
       entity: 'scholarships',
       entity_id: id,
       meta: { active, rules },
+      ip: clientIp,
     });
 
     return NextResponse.json({ success: true, scholarship: updated });

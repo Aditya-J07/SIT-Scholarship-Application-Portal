@@ -1,470 +1,876 @@
-import fs from 'fs';
-import path from 'path';
-import { 
-  DatabaseSchema, 
-  UserProfile, 
-  Scholarship, 
-  AcademicCycle, 
-  ApplicationRecord, 
-  ApplicationFileRecord, 
-  RemarkRecord, 
-  AuditRecord 
-} from '../types';
-import { hashPassword } from '../auth/password';
+import crypto from "crypto";
+import { getAdminClient } from "@/utils/supabase/admin";
+import {
+  UserProfile,
+  Scholarship,
+  AcademicCycle,
+  ApplicationRecord,
+  ApplicationFileRecord,
+  RemarkRecord,
+  AuditRecord,
+  DataRequestRecord,
+} from "../types";
+import {
+  encryptBankAccount,
+  decryptBankAccount,
+  getBankAccLast4,
+} from "../crypto/field-encryption";
 
-import os from 'os';
+import { generateUnambiguousRefNo } from "../crypto/ref-no";
+export { generateUnambiguousRefNo };
 
-function getWritableDataDir(): string {
-  if (process.env.VERCEL) {
-    const tmp = path.join(os.tmpdir(), 'sit_portal_data');
+function mapProfileFromDb(row: Record<string, unknown>): UserProfile {
+  let plainBankAcc: string | undefined = undefined;
+  if (row.bank_acc_no_encrypted) {
     try {
-      if (!fs.existsSync(tmp)) fs.mkdirSync(tmp, { recursive: true });
-      return tmp;
+      plainBankAcc = decryptBankAccount(String(row.bank_acc_no_encrypted));
     } catch {
-      return os.tmpdir();
+      plainBankAcc = undefined;
     }
   }
 
-  const localDir = path.join(process.cwd(), '.data');
-  try {
-    if (!fs.existsSync(localDir)) {
-      fs.mkdirSync(localDir, { recursive: true });
-    }
-    return localDir;
-  } catch {
-    const tmp = path.join(os.tmpdir(), 'sit_portal_data');
-    try {
-      if (!fs.existsSync(tmp)) fs.mkdirSync(tmp, { recursive: true });
-      return tmp;
-    } catch {
-      return os.tmpdir();
-    }
-  }
-}
-
-const DATA_DIR = getWritableDataDir();
-const DB_FILE = path.join(DATA_DIR, 'db.json');
-const STORAGE_DIR = path.join(DATA_DIR, 'storage');
-
-try {
-  if (!fs.existsSync(STORAGE_DIR)) {
-    fs.mkdirSync(STORAGE_DIR, { recursive: true });
-  }
-} catch {
-  // Gracefully ignored on read-only environments
-}
-
-function getInitialDatabase(): DatabaseSchema {
-  const adminPasswordHash = hashPassword('Admin@123');
-  const studentPasswordHash = hashPassword('Student@123');
-
-  const adminUser: UserProfile = {
-    id: 'user_admin_001',
-    role: 'admin',
-    full_name: 'COLLEGE ADMINISTRATOR (SIT)',
-    mobile: '9845012345',
-    email: 'admin@sit.ac.in',
-    password_hash: adminPasswordHash,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-
-  const studentUser: UserProfile = {
-    id: 'user_student_001',
-    role: 'student',
-    full_name: 'ROHAN PATIL',
-    mobile: '9880123456',
-    email: 'student@sit.ac.in',
-    password_hash: studentPasswordHash,
-    bank_account_holder: 'ROHAN PATIL',
-    bank_acc_no: '987654321098',
-    bank_name: 'State Bank of India',
-    bank_branch: 'SIT Campus Extension Counter, Tumakuru',
-    bank_ifsc: 'SBIN0040523',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-
-  const scholarships: Scholarship[] = [
-    {
-      id: 'sch_mnc',
-      code: 'MNC',
-      name: 'Dr. M.N. Channabasappa Endowment Fund Loan Scholarship',
-      active: true,
-      fee_label: 'Total fee per year',
-      requires_recommendation: false,
-      description: 'Endowment fund loan scholarship awarded on merit-cum-means for financially deserving students admitted through CET. Family income must not exceed Rs. 3,00,000 per annum.',
-      rules: {
-        income_limit: 300000,
-        cet_required: true,
-        max_assistance_pct: 30,
-        max_scholarship_pct: 50,
-        allow_backlog: false,
-        max_awardees_per_year: 1,
-        allow_submit_with_warning: false,
-      },
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: 'sch_sska',
-      code: 'SSKA',
-      name: 'Sri Sripathi K A Memorial Scholarship',
-      active: true,
-      fee_label: 'Tuition fee per year',
-      requires_recommendation: true,
-      description: 'Memorial scholarship for undergraduate students requiring tuition fee financial support. Includes Proctor and Head of Department official recommendation verification.',
-      rules: {
-        income_limit: 500000,
-        requires_hod_proctor_recommendation: true,
-        max_assistance_pct: 30,
-        allow_submit_with_warning: true,
-      },
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: 'sch_siteb',
-      code: 'SITEB',
-      name: 'SIT Scholarship to Economically Backward and Socially Challenged Students',
-      active: false, // Mark inactive until form is supplied as per build spec!
-      fee_label: 'Total fee per year',
-      requires_recommendation: false,
-      description: 'Special welfare scholarship for economically and socially challenged students. Application form awaiting official committee circular.',
-      rules: {},
-      created_at: new Date().toISOString(),
-    },
-  ];
-
-  const cycles: AcademicCycle[] = [
-    {
-      id: 'cycle_mnc_2026',
-      scholarship_id: 'sch_mnc',
-      academic_year: '2026-2027',
-      opens_at: new Date(Date.now() - 15 * 86400000).toISOString(),
-      closes_at: new Date(Date.now() + 60 * 86400000).toISOString(), // Open for 60 more days
-      status: 'open',
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: 'cycle_sska_2026',
-      scholarship_id: 'sch_sska',
-      academic_year: '2026-2027',
-      opens_at: new Date(Date.now() - 15 * 86400000).toISOString(),
-      closes_at: new Date(Date.now() + 60 * 86400000).toISOString(),
-      status: 'open',
-      created_at: new Date().toISOString(),
-    },
-  ];
-
-  // Seed two demo applications for admin review & merit ranking
-  const sampleApplications: ApplicationRecord[] = [
-    {
-      id: 'app_seed_001',
-      ref_no: 'SIT-MNC-2026-000101',
-      student_id: 'user_student_001',
-      cycle_id: 'cycle_mnc_2026',
-      status: 'submitted',
-      current_step: 7,
-      hard_copy_received: false,
-      data: {
-        scholarship_code: 'MNC',
-        full_name: 'ROHAN PATIL',
-        usn: '1SI23CS089',
-        dob: '2005-04-12',
-        nationality: 'Indian',
-        father_or_guardian_name: 'BASAVARAJ PATIL',
-        address: 'ROOM 204, GANGADHAR HOSTEL, SIT CAMPUS, TUMAKURU - 572103',
-        pincode: '572103',
-        mobile: '9880123456',
-        email: 'student@sit.ac.in',
-        parent_occupation: 'Farmer',
-        family_annual_income: 120000,
-        income_cert_issue_date: '2024-06-15',
-        admitted_through_cet: true,
-        last_exam_passed: 'II PUC',
-        marks_obtained: 568,
-        marks_gross_total: 600,
-        percentage: 94.67,
-        course: 'Computer Science and Engineering',
-        year_of_study: 1,
-        semester: 1,
-        course_duration_years: 4,
-        final_exam_month_year: '2028-06',
-        annual_fee: 98000,
-        applied_earlier: false,
-        getting_other_scholarship: false,
-        scholarship_amount_required_per_month: 3500,
-        bank_acc_holder_name: 'ROHAN PATIL',
-        bank_acc_no: '987654321098',
-        bank_name: 'State Bank of India',
-        bank_branch: 'SIT Campus Extension Counter, Tumakuru',
-        bank_ifsc: 'SBIN0040523',
-        declaration_accepted: true,
-      },
-      computed: {
-        percentage: 94.67,
-        merit_score: 94.67,
-        eligibility_flags: {
-          passed_all_hard_rules: true,
-          income_exceeded: false,
-          backlog_disqualified: false,
-          cet_disqualified: false,
-          other_assistance_exceeded: false,
-          amount_warn_exceeded: false,
-          warnings: [],
-          errors: [],
-        },
-      },
-      merit_score: 94.67,
-      submitted_at: new Date(Date.now() - 2 * 86400000).toISOString(),
-      created_at: new Date(Date.now() - 3 * 86400000).toISOString(),
-      updated_at: new Date(Date.now() - 2 * 86400000).toISOString(),
-    },
-  ];
+  const last4 = row.bank_acc_last4
+    ? String(row.bank_acc_last4)
+    : plainBankAcc
+      ? getBankAccLast4(plainBankAcc)
+      : undefined;
 
   return {
-    profiles: [adminUser, studentUser],
-    scholarships,
-    cycles,
-    applications: sampleApplications,
-    application_files: [],
-    remarks: [],
-    audit_logs: [
-      {
-        id: 'audit_init_001',
-        action: 'SYSTEM_INITIALIZED',
-        entity: 'system',
-        entity_id: 'sit_portal',
-        created_at: new Date().toISOString(),
-      },
-    ],
+    id: String(row.id),
+    role: row.role as UserProfile["role"],
+    full_name: String(row.full_name || ""),
+    mobile: String(row.mobile || ""),
+    email: String(row.email || ""),
+    must_change_password: Boolean(row.must_change_password),
+    bank_account_holder: row.bank_account_holder ? String(row.bank_account_holder) : undefined,
+    bank_acc_no: plainBankAcc,
+    bank_acc_last4: last4,
+    bank_name: row.bank_name ? String(row.bank_name) : undefined,
+    bank_branch: row.bank_branch ? String(row.bank_branch) : undefined,
+    bank_ifsc: row.bank_ifsc ? String(row.bank_ifsc) : undefined,
+    last_seen_at: row.last_seen_at ? String(row.last_seen_at) : undefined,
+    consent_accepted_at: row.consent_accepted_at ? String(row.consent_accepted_at) : undefined,
+    consent_version: row.consent_version ? String(row.consent_version) : undefined,
+    department: row.department ? String(row.department) : undefined,
+    created_at: String(row.created_at || new Date().toISOString()),
+    updated_at: String(row.updated_at || new Date().toISOString()),
   };
 }
 
-class Database {
-  private memoryDb: DatabaseSchema | null = null;
-
-  private load(): DatabaseSchema {
-    try {
-      if (fs.existsSync(DB_FILE)) {
-        const raw = fs.readFileSync(DB_FILE, 'utf-8');
-        this.memoryDb = JSON.parse(raw);
-        return this.memoryDb!;
-      }
-    } catch (err) {
-      console.warn('Error reading db.json, using initial database state:', err);
-    }
-    const initial = getInitialDatabase();
-    this.memoryDb = initial;
-    try {
-      this.save(initial);
-    } catch {
-      // Ignored if write is not permitted
-    }
-    return initial;
-  }
-
-  private save(data: DatabaseSchema) {
-    this.memoryDb = data;
-    try {
-      const tempFile = `${DB_FILE}.tmp.${Date.now()}`;
-      fs.writeFileSync(tempFile, JSON.stringify(data, null, 2), 'utf-8');
-      fs.renameSync(tempFile, DB_FILE);
-    } catch (err) {
-      // Gracefully preserve state in memory if filesystem writes fail (e.g. Vercel)
-    }
-  }
-
-  public getDb(): DatabaseSchema {
-    if (!this.memoryDb) {
-      return this.load();
-    }
-    return this.memoryDb;
-  }
-
-  public mutate<T>(updater: (db: DatabaseSchema) => T): T {
-    const db = this.getDb();
-    const result = updater(db);
-    this.save(db);
-    return result;
+function getSafeClient() {
+  try {
+    return getAdminClient();
+  } catch {
+    return null;
   }
 }
 
-export const dbInstance = new Database();
-
-// Repositories
 export const db = {
-  // Profiles
-  findUserByEmail: (email: string) => {
-    const data = dbInstance.getDb();
-    return data.profiles.find((p) => p.email.toLowerCase() === email.toLowerCase()) || null;
+  updateStaffLastSeen: async (userId: string): Promise<void> => {
+    const supabase = getSafeClient();
+    if (!supabase) return;
+    try {
+      await supabase
+        .from("profiles")
+        .update({ last_seen_at: new Date().toISOString() })
+        .eq("id", userId);
+    } catch (err) {
+      console.error("[DB] updateStaffLastSeen error:", err);
+    }
   },
-  findUserById: (id: string) => {
-    const data = dbInstance.getDb();
-    return data.profiles.find((p) => p.id === id) || null;
-  },
-  createUser: (profile: UserProfile) => {
-    return dbInstance.mutate((data) => {
-      data.profiles.push(profile);
-      return profile;
-    });
-  },
-  updateUser: (id: string, updates: Partial<UserProfile>) => {
-    return dbInstance.mutate((data) => {
-      const idx = data.profiles.findIndex((p) => p.id === id);
-      if (idx === -1) return null;
-      data.profiles[idx] = {
-        ...data.profiles[idx],
-        ...updates,
-        updated_at: new Date().toISOString(),
-      };
-      return data.profiles[idx];
-    });
-  },
-  listUsers: () => {
-    return dbInstance.getDb().profiles;
+  // --------------------------------------------------------------------------
+  // Profiles / Users
+  // --------------------------------------------------------------------------
+  findUserByEmail: async (email: string): Promise<UserProfile | null> => {
+    const supabase = getSafeClient();
+    if (!supabase) return null;
+    const normalized = email.trim().toLowerCase();
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .ilike("email", normalized)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[DB] findUserByEmail error:", error.message);
+      return null;
+    }
+    return data ? mapProfileFromDb(data) : null;
   },
 
+  findUserById: async (id: string): Promise<UserProfile | null> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[DB] findUserById error:", error.message);
+      return null;
+    }
+    return data ? mapProfileFromDb(data) : null;
+  },
+
+  createUser: async (profile: UserProfile): Promise<UserProfile> => {
+    const supabase = getAdminClient();
+    const encAccount = profile.bank_acc_no ? encryptBankAccount(profile.bank_acc_no) : null;
+    const last4 = profile.bank_acc_no ? getBankAccLast4(profile.bank_acc_no) : null;
+
+    const insertPayload = {
+      id: profile.id,
+      role: profile.role,
+      full_name: profile.full_name,
+      mobile: profile.mobile,
+      email: profile.email.toLowerCase(),
+      department: profile.department || null,
+      must_change_password: profile.must_change_password ?? false,
+      bank_account_holder: profile.bank_account_holder || null,
+      bank_acc_no_encrypted: encAccount,
+      bank_acc_last4: last4,
+      bank_name: profile.bank_name || null,
+      bank_branch: profile.bank_branch || null,
+      bank_ifsc: profile.bank_ifsc || null,
+      created_at: profile.created_at || new Date().toISOString(),
+      updated_at: profile.updated_at || new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .upsert(insertPayload, { onConflict: "id" })
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("[DB] createUser error:", error.message);
+      throw new Error(`Failed to create profile: ${error.message}`);
+    }
+
+    return mapProfileFromDb(data);
+  },
+
+  updateUser: async (id: string, updates: Partial<UserProfile>): Promise<UserProfile | null> => {
+    const supabase = getAdminClient();
+    const updatePayload: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (updates.full_name !== undefined) updatePayload.full_name = updates.full_name;
+    if (updates.mobile !== undefined) updatePayload.mobile = updates.mobile;
+    if (updates.email !== undefined) updatePayload.email = updates.email.toLowerCase();
+    if (updates.role !== undefined) updatePayload.role = updates.role;
+    if (updates.must_change_password !== undefined)
+      updatePayload.must_change_password = updates.must_change_password;
+    if (updates.bank_account_holder !== undefined)
+      updatePayload.bank_account_holder = updates.bank_account_holder;
+    if (updates.bank_name !== undefined) updatePayload.bank_name = updates.bank_name;
+    if (updates.bank_branch !== undefined) updatePayload.bank_branch = updates.bank_branch;
+    if (updates.bank_ifsc !== undefined) updatePayload.bank_ifsc = updates.bank_ifsc;
+    if (updates.bank_acc_no !== undefined) {
+      updatePayload.bank_acc_no_encrypted = updates.bank_acc_no
+        ? encryptBankAccount(updates.bank_acc_no)
+        : null;
+      updatePayload.bank_acc_last4 = updates.bank_acc_no
+        ? getBankAccLast4(updates.bank_acc_no)
+        : null;
+    }
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .update(updatePayload)
+      .eq("id", id)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("[DB] updateUser error:", error.message);
+      return null;
+    }
+
+    return mapProfileFromDb(data);
+  },
+
+  listUsers: async (): Promise<UserProfile[]> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[DB] listUsers error:", error.message);
+      return [];
+    }
+
+    return (data || []).map(mapProfileFromDb);
+  },
+
+  // --------------------------------------------------------------------------
   // Scholarships
-  listScholarships: () => {
-    return dbInstance.getDb().scholarships;
-  },
-  findScholarshipByCode: (code: string) => {
-    return dbInstance.getDb().scholarships.find((s) => s.code.toUpperCase() === code.toUpperCase()) || null;
-  },
-  findScholarshipById: (id: string) => {
-    return dbInstance.getDb().scholarships.find((s) => s.id === id) || null;
-  },
-  updateScholarship: (id: string, updates: Partial<Scholarship>) => {
-    return dbInstance.mutate((data) => {
-      const idx = data.scholarships.findIndex((s) => s.id === id);
-      if (idx === -1) return null;
-      data.scholarships[idx] = { ...data.scholarships[idx], ...updates };
-      return data.scholarships[idx];
-    });
+  // --------------------------------------------------------------------------
+  listScholarships: async (): Promise<Scholarship[]> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("scholarships")
+      .select("*")
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("[DB] listScholarships error:", error.message);
+      return [];
+    }
+
+    return (data || []) as Scholarship[];
   },
 
+  findScholarshipByCode: async (code: string): Promise<Scholarship | null> => {
+    const supabase = getAdminClient();
+    const upper = code.trim().toUpperCase();
+
+    const { data, error } = await supabase
+      .from("scholarships")
+      .select("*")
+      .eq("code", upper)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[DB] findScholarshipByCode error:", error.message);
+      return null;
+    }
+
+    return (data as Scholarship) || null;
+  },
+
+  findScholarshipById: async (id: string): Promise<Scholarship | null> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("scholarships")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[DB] findScholarshipById error:", error.message);
+      return null;
+    }
+
+    return (data as Scholarship) || null;
+  },
+
+  updateScholarship: async (
+    id: string,
+    updates: Partial<Scholarship>
+  ): Promise<Scholarship | null> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("scholarships")
+      .update(updates)
+      .eq("id", id)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("[DB] updateScholarship error:", error.message);
+      return null;
+    }
+
+    return (data as Scholarship) || null;
+  },
+
+  // --------------------------------------------------------------------------
   // Cycles
-  listCycles: () => {
-    return dbInstance.getDb().cycles;
+  // --------------------------------------------------------------------------
+  listCycles: async (): Promise<AcademicCycle[]> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("cycles")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[DB] listCycles error:", error.message);
+      return [];
+    }
+
+    return (data || []) as AcademicCycle[];
   },
-  findCycleById: (id: string) => {
-    return dbInstance.getDb().cycles.find((c) => c.id === id) || null;
+
+  findCycleById: async (id: string): Promise<AcademicCycle | null> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("cycles")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[DB] findCycleById error:", error.message);
+      return null;
+    }
+
+    return (data as AcademicCycle) || null;
   },
-  findActiveCycleForScholarship: (scholarshipId: string) => {
+
+  findActiveCycleForScholarship: async (scholarshipId: string): Promise<AcademicCycle | null> => {
+    const supabase = getAdminClient();
     const now = new Date().toISOString();
-    return (
-      dbInstance
-        .getDb()
-        .cycles.find(
-          (c) =>
-            c.scholarship_id === scholarshipId &&
-            c.status === 'open' &&
-            c.opens_at <= now &&
-            c.closes_at >= now
-        ) || null
-    );
-  },
-  updateCycle: (id: string, updates: Partial<AcademicCycle>) => {
-    return dbInstance.mutate((data) => {
-      const idx = data.cycles.findIndex((c) => c.id === id);
-      if (idx === -1) return null;
-      data.cycles[idx] = { ...data.cycles[idx], ...updates };
-      return data.cycles[idx];
-    });
-  },
-  createCycle: (cycle: AcademicCycle) => {
-    return dbInstance.mutate((data) => {
-      data.cycles.push(cycle);
-      return cycle;
-    });
+
+    const { data, error } = await supabase
+      .from("cycles")
+      .select("*")
+      .eq("scholarship_id", scholarshipId)
+      .eq("status", "open")
+      .lte("opens_at", now)
+      .gte("closes_at", now)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[DB] findActiveCycleForScholarship error:", error.message);
+      return null;
+    }
+
+    return (data as AcademicCycle) || null;
   },
 
+  updateCycle: async (
+    id: string,
+    updates: Partial<AcademicCycle>
+  ): Promise<AcademicCycle | null> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("cycles")
+      .update(updates)
+      .eq("id", id)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("[DB] updateCycle error:", error.message);
+      return null;
+    }
+
+    return (data as AcademicCycle) || null;
+  },
+
+  createCycle: async (cycle: AcademicCycle): Promise<AcademicCycle> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("cycles")
+      .insert(cycle)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("[DB] createCycle error:", error.message);
+      throw new Error(`Failed to create cycle: ${error.message}`);
+    }
+
+    return data as AcademicCycle;
+  },
+
+  // --------------------------------------------------------------------------
   // Applications
-  listApplications: () => {
-    return dbInstance.getDb().applications;
-  },
-  findApplicationById: (id: string) => {
-    return dbInstance.getDb().applications.find((a) => a.id === id) || null;
-  },
-  findApplicationByRefNo: (refNo: string) => {
-    return dbInstance.getDb().applications.find((a) => a.ref_no.toUpperCase() === refNo.toUpperCase()) || null;
-  },
-  findApplicationForStudentInCycle: (studentId: string, cycleId: string) => {
-    return (
-      dbInstance
-        .getDb()
-        .applications.find((a) => a.student_id === studentId && a.cycle_id === cycleId) || null
-    );
-  },
-  listApplicationsForStudent: (studentId: string) => {
-    return dbInstance.getDb().applications.filter((a) => a.student_id === studentId);
-  },
-  createApplication: (app: ApplicationRecord) => {
-    return dbInstance.mutate((data) => {
-      data.applications.push(app);
-      return app;
-    });
-  },
-  updateApplication: (id: string, updates: Partial<ApplicationRecord>) => {
-    return dbInstance.mutate((data) => {
-      const idx = data.applications.findIndex((a) => a.id === id);
-      if (idx === -1) return null;
-      data.applications[idx] = {
-        ...data.applications[idx],
-        ...updates,
-        updated_at: new Date().toISOString(),
-      };
-      return data.applications[idx];
-    });
+  // --------------------------------------------------------------------------
+  listApplications: async (): Promise<ApplicationRecord[]> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("applications")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[DB] listApplications error:", error.message);
+      return [];
+    }
+
+    return (data || []) as ApplicationRecord[];
   },
 
+  findApplicationById: async (id: string): Promise<ApplicationRecord | null> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("applications")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[DB] findApplicationById error:", error.message);
+      return null;
+    }
+
+    return (data as ApplicationRecord) || null;
+  },
+
+  findApplicationByRefNo: async (refNo: string): Promise<ApplicationRecord | null> => {
+    const supabase = getAdminClient();
+    const upper = refNo.trim().toUpperCase();
+
+    const { data, error } = await supabase
+      .from("applications")
+      .select("*")
+      .eq("ref_no", upper)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[DB] findApplicationByRefNo error:", error.message);
+      return null;
+    }
+
+    return (data as ApplicationRecord) || null;
+  },
+
+  findApplicationForStudentInCycle: async (
+    studentId: string,
+    cycleId: string
+  ): Promise<ApplicationRecord | null> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("applications")
+      .select("*")
+      .eq("student_id", studentId)
+      .eq("cycle_id", cycleId)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[DB] findApplicationForStudentInCycle error:", error.message);
+      return null;
+    }
+
+    return (data as ApplicationRecord) || null;
+  },
+
+  listApplicationsForStudent: async (studentId: string): Promise<ApplicationRecord[]> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("applications")
+      .select("*")
+      .eq("student_id", studentId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[DB] listApplicationsForStudent error:", error.message);
+      return [];
+    }
+
+    return (data || []) as ApplicationRecord[];
+  },
+
+  createApplication: async (app: ApplicationRecord): Promise<ApplicationRecord> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("applications")
+      .insert(app)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("[DB] createApplication error:", error.message);
+      throw new Error(`Failed to create application: ${error.message}`);
+    }
+
+    return data as ApplicationRecord;
+  },
+
+  /**
+   * Updates application with optional concurrency/conflict check.
+   * If expectedUpdatedAt is provided, only updates if updated_at matches.
+   */
+  updateApplication: async (
+    id: string,
+    updates: Partial<ApplicationRecord>,
+    expectedUpdatedAt?: string
+  ): Promise<ApplicationRecord | null> => {
+    const supabase = getAdminClient();
+    const updatePayload = {
+      ...updates,
+      updated_at: new Date().toISOString(),
+    };
+
+    let query = supabase
+      .from("applications")
+      .update(updatePayload)
+      .eq("id", id);
+
+    if (expectedUpdatedAt) {
+      query = query.eq("updated_at", expectedUpdatedAt);
+    }
+
+    const { data, error } = await query.select("*").maybeSingle();
+
+    if (error) {
+      console.error("[DB] updateApplication error:", error.message);
+      return null;
+    }
+
+    return (data as ApplicationRecord) || null;
+  },
+
+  /**
+   * Idempotent submit: Status changes to 'submitted' strictly where current status is 'draft' or 'needs_correction'.
+   * Double submissions safely return null / conflict without duplicating state.
+   */
+  submitApplication: async (
+    id: string,
+    updates: Partial<ApplicationRecord>
+  ): Promise<ApplicationRecord | null> => {
+    const supabase = getAdminClient();
+    const updatePayload: Record<string, unknown> = {
+      ...updates,
+      status: "submitted",
+      submitted_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    let res = await supabase
+      .from("applications")
+      .update(updatePayload)
+      .eq("id", id)
+      .in("status", ["draft", "needs_correction"])
+      .select("*")
+      .maybeSingle();
+
+    if (res.error && (res.error.message?.includes("fetch failed") || res.error.message?.includes("ECONNRESET"))) {
+      await new Promise((r) => setTimeout(r, 600));
+      res = await supabase
+        .from("applications")
+        .update(updatePayload)
+        .eq("id", id)
+        .in("status", ["draft", "needs_correction"])
+        .select("*")
+        .maybeSingle();
+    }
+
+    const { data, error } = res;
+
+    if (error) {
+      if ((error.code === "PGRST204" || error.code === "42703" || error.message?.includes("department")) && "department" in updatePayload) {
+        delete updatePayload.department;
+        const retryRes = await supabase
+          .from("applications")
+          .update(updatePayload)
+          .eq("id", id)
+          .in("status", ["draft", "needs_correction"])
+          .select("*")
+          .maybeSingle();
+        if (retryRes.error) {
+          console.error("[DB] submitApplication retry error:", retryRes.error.message);
+          throw retryRes.error;
+        }
+        return (retryRes.data as ApplicationRecord) || null;
+      }
+      console.error("[DB] submitApplication error:", error.message);
+      throw error;
+    }
+
+    return (data as ApplicationRecord) || null;
+  },
+
+  // --------------------------------------------------------------------------
   // Files
-  listFilesForApplication: (applicationId: string) => {
-    return dbInstance.getDb().application_files.filter((f) => f.application_id === applicationId);
-  },
-  findFileById: (id: string) => {
-    return dbInstance.getDb().application_files.find((f) => f.id === id) || null;
-  },
-  saveFileRecord: (file: ApplicationFileRecord) => {
-    return dbInstance.mutate((data) => {
-      // Remove any existing file for the same application and kind
-      data.application_files = data.application_files.filter(
-        (f) => !(f.application_id === file.application_id && f.kind === file.kind)
-      );
-      data.application_files.push(file);
-      return file;
-    });
+  // --------------------------------------------------------------------------
+  listFilesForApplication: async (applicationId: string): Promise<ApplicationFileRecord[]> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("application_files")
+      .select("*")
+      .eq("application_id", applicationId)
+      .order("uploaded_at", { ascending: true });
+
+    if (error) {
+      console.error("[DB] listFilesForApplication error:", error.message);
+      return [];
+    }
+
+    return (data || []) as ApplicationFileRecord[];
   },
 
+  findFileById: async (id: string): Promise<ApplicationFileRecord | null> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("application_files")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[DB] findFileById error:", error.message);
+      return null;
+    }
+
+    return (data as ApplicationFileRecord) || null;
+  },
+
+  saveFileRecord: async (file: ApplicationFileRecord): Promise<ApplicationFileRecord> => {
+    const supabase = getAdminClient();
+
+    // Upsert or replace existing file record for this application and kind
+    await supabase
+      .from("application_files")
+      .delete()
+      .eq("application_id", file.application_id)
+      .eq("kind", file.kind);
+
+    const { data, error } = await supabase
+      .from("application_files")
+      .insert(file)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("[DB] saveFileRecord error:", error.message);
+      throw new Error(`Failed to save file record: ${error.message}`);
+    }
+
+    return data as ApplicationFileRecord;
+  },
+
+  findFilesByApplicationId: async (applicationId: string): Promise<ApplicationFileRecord[]> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("application_files")
+      .select("*")
+      .eq("application_id", applicationId)
+      .order("uploaded_at", { ascending: true });
+
+    if (error) {
+      console.error("[DB] findFilesByApplicationId error:", error.message);
+      return [];
+    }
+
+    return (data || []) as ApplicationFileRecord[];
+  },
+
+  deleteFileRecord: async (id: string): Promise<boolean> => {
+    const supabase = getAdminClient();
+
+    const { error } = await supabase
+      .from("application_files")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      console.error("[DB] deleteFileRecord error:", error.message);
+      return false;
+    }
+
+    return true;
+  },
+
+  // --------------------------------------------------------------------------
   // Remarks
-  listRemarksForApplication: (applicationId: string) => {
-    return dbInstance
-      .getDb()
-      .remarks.filter((r) => r.application_id === applicationId)
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-  },
-  addRemark: (remark: RemarkRecord) => {
-    return dbInstance.mutate((data) => {
-      data.remarks.push(remark);
-      return remark;
-    });
+  // --------------------------------------------------------------------------
+  listRemarksForApplication: async (applicationId: string): Promise<RemarkRecord[]> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("remarks")
+      .select("*")
+      .eq("application_id", applicationId)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("[DB] listRemarksForApplication error:", error.message);
+      return [];
+    }
+
+    return (data || []) as RemarkRecord[];
   },
 
-  // Audit Log
-  listAuditLogs: () => {
-    return [...dbInstance.getDb().audit_logs].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
+  addRemark: async (remark: RemarkRecord): Promise<RemarkRecord> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("remarks")
+      .insert(remark)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("[DB] addRemark error:", error.message);
+      throw new Error(`Failed to add remark: ${error.message}`);
+    }
+
+    return data as RemarkRecord;
   },
-  logAudit: (record: Omit<AuditRecord, 'id' | 'created_at'>) => {
+
+  checkVisibleToStudentColumn: async (): Promise<boolean> => {
+    const supabase = getAdminClient();
+    const { error } = await supabase.from("remarks").select("visible_to_student").limit(1);
+    if (error) {
+      console.error("[DB] visible_to_student column check failed:", error.message);
+      return false;
+    }
+    return true;
+  },
+
+  // --------------------------------------------------------------------------
+  // Audit Log (Immutable, append-only)
+  // --------------------------------------------------------------------------
+  listAuditLogs: async (): Promise<AuditRecord[]> => {
+    const supabase = getAdminClient();
+
+    const { data, error } = await supabase
+      .from("audit_log")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[DB] listAuditLogs error:", error.message);
+      return [];
+    }
+
+    return (data || []) as AuditRecord[];
+  },
+
+  logAudit: async (record: Omit<AuditRecord, "id" | "created_at">): Promise<AuditRecord> => {
+    const supabase = getAdminClient();
     const fullRecord: AuditRecord = {
       ...record,
-      id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      id: crypto.randomUUID(),
       created_at: new Date().toISOString(),
     };
-    return dbInstance.mutate((data) => {
-      data.audit_logs.push(fullRecord);
+
+    const { data, error } = await supabase
+      .from("audit_log")
+      .insert(fullRecord)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("[DB] logAudit error:", error.message);
+      // Return fullRecord even on logging failure so operation is not completely halted
       return fullRecord;
-    });
+    }
+
+    return (data as AuditRecord) || fullRecord;
+  },
+
+  // --------------------------------------------------------------------------
+  // Data Requests (DPDP Act 2023)
+  // --------------------------------------------------------------------------
+  listDataRequests: async (statusFilter?: string): Promise<DataRequestRecord[]> => {
+    const supabase = getAdminClient();
+    let query = supabase
+      .from("data_requests")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (statusFilter) {
+      query = query.eq("status", statusFilter);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error("[DB] listDataRequests error:", error.message);
+      return [];
+    }
+    return (data || []) as DataRequestRecord[];
+  },
+
+  findDataRequestsForStudent: async (studentId: string): Promise<DataRequestRecord[]> => {
+    const supabase = getAdminClient();
+    const { data, error } = await supabase
+      .from("data_requests")
+      .select("*")
+      .eq("student_id", studentId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[DB] findDataRequestsForStudent error:", error.message);
+      return [];
+    }
+    return (data || []) as DataRequestRecord[];
+  },
+
+  findDataRequestById: async (id: string): Promise<DataRequestRecord | null> => {
+    const supabase = getAdminClient();
+    const { data, error } = await supabase
+      .from("data_requests")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[DB] findDataRequestById error:", error.message);
+      return null;
+    }
+    return (data as DataRequestRecord) || null;
+  },
+
+  createDataRequest: async (
+    req: Omit<DataRequestRecord, "id" | "created_at" | "updated_at">
+  ): Promise<DataRequestRecord> => {
+    const supabase = getAdminClient();
+    const now = new Date().toISOString();
+    const newRecord: DataRequestRecord = {
+      ...req,
+      id: crypto.randomUUID(),
+      created_at: now,
+      updated_at: now,
+    };
+
+    const { data, error } = await supabase
+      .from("data_requests")
+      .insert(newRecord)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("[DB] createDataRequest error:", error.message);
+      throw new Error(`Failed to create data request: ${error.message}`);
+    }
+    return (data as DataRequestRecord) || newRecord;
+  },
+
+  updateDataRequest: async (
+    id: string,
+    updates: Partial<DataRequestRecord>
+  ): Promise<DataRequestRecord | null> => {
+    const supabase = getAdminClient();
+    const payload = {
+      ...updates,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from("data_requests")
+      .update(payload)
+      .eq("id", id)
+      .select("*")
+      .maybeSingle();
+
+    if (error) {
+      console.error("[DB] updateDataRequest error:", error.message);
+      return null;
+    }
+    return (data as DataRequestRecord) || null;
   },
 };
+
+// Named exports for convenient direct imports
+export const findUserById = (id: string) => db.findUserById(id);
+export const findUserByEmail = (email: string) => db.findUserByEmail(email);
+export const listScholarships = () => db.listScholarships();
+export const findScholarshipByCode = (code: string) => db.findScholarshipByCode(code);
+export const listCycles = () => db.listCycles();
+export const listApplications = () => db.listApplications();

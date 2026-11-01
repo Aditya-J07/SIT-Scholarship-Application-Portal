@@ -1,6 +1,6 @@
 // SIT Scholarship Application Portal - Core Types
 
-export type UserRole = 'student' | 'admin';
+export type UserRole = 'student' | 'reviewer' | 'admin';
 
 export type ApplicationStatus = 
   | 'draft'
@@ -19,11 +19,23 @@ export interface UserProfile {
   mobile: string;
   email: string;
   password_hash?: string;
+  must_change_password?: boolean;
+  email_verified?: boolean;
+  token_version?: number;
+  two_factor_enabled?: boolean;
+  two_factor_secret?: string;
+  two_factor_recovery_codes?: string[];
   bank_account_holder?: string;
   bank_acc_no?: string;
+  bank_acc_no_encrypted?: string;
+  bank_acc_last4?: string;
   bank_name?: string;
   bank_branch?: string;
   bank_ifsc?: string;
+  last_seen_at?: string;
+  consent_accepted_at?: string;
+  consent_version?: string;
+  department?: string;
   created_at: string;
   updated_at: string;
 }
@@ -37,6 +49,7 @@ export interface ScholarshipRules {
   max_awardees_per_year?: number; // 1 per year
   requires_hod_proctor_recommendation?: boolean; // true for SSKA
   allow_submit_with_warning?: boolean; // admin toggle
+  required_documents?: string[]; // Per-scholarship list of required document kinds
 }
 
 export interface Scholarship {
@@ -86,6 +99,7 @@ export interface ApplicationFormData {
   marks_gross_total: number;
   percentage?: number; // computed
   course: string; // "CSE", "ECE", "ISE", etc.
+  department?: string; // normalized department code e.g. "ME", "CSE"
   year_of_study: number; // 1 to 4
   semester: number; // 1 to 8
   cgpa?: number | null; // for years 2-4
@@ -104,13 +118,18 @@ export interface ApplicationFormData {
   // Step 5: Bank details (student's own)
   bank_acc_holder_name: string;
   bank_acc_no: string;
+  bank_acc_no_encrypted?: string | null;
+  bank_acc_last4?: string | null;
   confirm_bank_acc_no?: string;
+  is_masked?: boolean;
   bank_name: string;
   bank_branch: string;
   bank_ifsc: string;
 
-  // Declaration
+  // Declaration & Minor Consent
   declaration_accepted?: boolean;
+  guardian_consent_name?: string;
+  guardian_consent_accepted?: boolean;
 }
 
 export interface ApplicationComputed {
@@ -147,6 +166,7 @@ export interface ApplicationFileRecord {
   sha256: string;
   original_name: string;
   uploaded_at: string;
+  url?: string;
 }
 
 export interface RemarkRecord {
@@ -155,8 +175,9 @@ export interface RemarkRecord {
   author_id: string;
   author_name: string;
   author_role: UserRole;
-  kind: 'internal_note' | 'correction_request' | 'recommendation' | 'decision';
+  kind: 'internal_note' | 'correction_request' | 'recommendation' | 'decision' | 'tie_break';
   body: string;
+  visible_to_student?: boolean;
   created_at: string;
 }
 
@@ -189,8 +210,25 @@ export interface ApplicationRecord {
   pdf_path?: string;
   pdf_sha256?: string;
   hard_copy_received: boolean;
+  hard_copy_received_at?: string;
+  bank_acc_hash?: string;
+  department?: string;
   recommendation_status?: 'pending' | 'recommended' | 'not_recommended';
   recommendation_note?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DataRequestRecord {
+  id: string;
+  student_id: string;
+  student_email: string;
+  request_type: 'correction' | 'deletion';
+  details: string;
+  status: 'pending' | 'in_progress' | 'resolved' | 'rejected';
+  admin_notes?: string;
+  resolved_by?: string;
+  resolved_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -203,4 +241,5 @@ export interface DatabaseSchema {
   application_files: ApplicationFileRecord[];
   remarks: RemarkRecord[];
   audit_logs: AuditRecord[];
+  data_requests: DataRequestRecord[];
 }

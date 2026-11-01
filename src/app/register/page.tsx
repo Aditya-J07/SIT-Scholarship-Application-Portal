@@ -1,12 +1,11 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useLanguage } from '@/components/LanguageToggle';
+import { Turnstile, TurnstileRef } from '@/components/Turnstile';
 
 export default function RegisterPage() {
-  const router = useRouter();
   const { t, lang } = useLanguage();
   const [formData, setFormData] = useState({
     full_name: '',
@@ -16,6 +15,8 @@ export default function RegisterPage() {
     confirm_password: '',
     consent_accepted: false,
   });
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const turnstileRef = useRef<TurnstileRef>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -39,7 +40,7 @@ export default function RegisterPage() {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({ ...formData, turnstileToken }),
       });
 
       const data = await res.json();
@@ -47,13 +48,17 @@ export default function RegisterPage() {
 
       if (!res.ok) {
         setError(data.error?.message || (lang === 'kn' ? 'ನೋಂದಣಿ ವಿಫಲವಾಗಿದೆ' : 'Registration failed'));
+        turnstileRef.current?.reset();
+        setTurnstileToken('');
       } else {
-        router.push('/dashboard');
-        router.refresh();
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- hard redirect keeps auth cookies
+        window.location.href = '/dashboard';
       }
     } catch {
       setLoading(false);
       setError(lang === 'kn' ? 'ಸಂಪರ್ಕ ದೋಷ. ದಯವಿಟ್ಟು ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.' : 'Connection error. Please try again.');
+      turnstileRef.current?.reset();
+      setTurnstileToken('');
     }
   };
 
@@ -112,7 +117,7 @@ export default function RegisterPage() {
               required
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value.toLowerCase() })}
-              placeholder="name@sit.ac.in"
+              placeholder="student@example.edu"
               className="gov-input"
             />
           </div>
@@ -176,10 +181,27 @@ export default function RegisterPage() {
               />
               <span className="text-[11px] text-gray-700 leading-relaxed">
                 <strong>{lang === 'kn' ? 'ಡಿಪಿಡಿಪಿ ಕಾಯ್ದೆ 2023 ರ ಸಮ್ಮತಿ: ' : 'DPDP Act 2023 Consent: '}</strong>
-                {t.dpdp_consent}
+                {t.dpdp_consent}{' '}
+                <Link href="/privacy" target="_blank" className="text-[#AC3D47] font-semibold underline hover:text-[#8D323A]">
+                  {lang === 'kn' ? 'ಗೌಪ್ಯತಾ ನೀತಿ' : 'Privacy Policy'}
+                </Link>{' '}
+                &{' '}
+                <Link href="/terms" target="_blank" className="text-[#AC3D47] font-semibold underline hover:text-[#8D323A]">
+                  {lang === 'kn' ? 'ಬಳಕೆಯ ನಿಯಮಗಳು' : 'Terms of Use'}
+                </Link>.
               </span>
             </label>
           </div>
+
+          <Turnstile
+            ref={turnstileRef}
+            onVerify={(token) => {
+              setTurnstileToken(token);
+              setError(null);
+            }}
+            onExpire={() => setTurnstileToken('')}
+            onError={(err) => setError(err || 'Security verification failed')}
+          />
 
           <button
             type="submit"
@@ -190,11 +212,26 @@ export default function RegisterPage() {
           </button>
         </form>
 
-        <div className="mt-5 text-center text-xs text-gray-600 border-t border-gray-200 pt-4">
-          {t.already_have_account}{' '}
-          <Link href="/login" className="font-bold text-[#AC3D47] hover:underline">
-            {t.login_link}
-          </Link>
+        <div className="mt-5 text-center text-xs text-gray-600 border-t border-gray-200 pt-4 space-y-2">
+          <div>
+            {t.already_have_account}{' '}
+            <Link href="/login" className="font-bold text-[#AC3D47] hover:underline">
+              {t.login_link}
+            </Link>
+          </div>
+          <div className="pt-2 border-t border-gray-100 flex items-center justify-center gap-3 text-[11px] text-gray-500">
+            <Link href="/privacy" className="hover:text-[#AC3D47] hover:underline">
+              {lang === 'kn' ? 'ಗೌಪ್ಯತಾ ನೀತಿ' : 'Privacy Policy'}
+            </Link>
+            <span>•</span>
+            <Link href="/terms" className="hover:text-[#AC3D47] hover:underline">
+              {lang === 'kn' ? 'ನಿಯಮಗಳು' : 'Terms of Use'}
+            </Link>
+            <span>•</span>
+            <Link href="/faq" className="hover:text-[#AC3D47] hover:underline">
+              {lang === 'kn' ? 'ಪ್ರಶ್ನೋತ್ತರ' : 'FAQ'}
+            </Link>
+          </div>
         </div>
       </div>
     </div>

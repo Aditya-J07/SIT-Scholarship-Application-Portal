@@ -1,135 +1,148 @@
-import fs from 'fs';
-import path from 'path';
-import { createClient } from '@supabase/supabase-js';
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+import crypto from "crypto";
+import { getAdminClient } from "@/utils/supabase/admin";
 
-// Check if valid Supabase credentials have been provided
-export const isSupabaseConfigured = Boolean(
-  supabaseUrl &&
-  supabaseKey &&
-  !supabaseUrl.includes('your-project') &&
-  supabaseUrl.startsWith('https://')
-);
+const BUCKET_NAME = "application-files";
 
-const supabase = isSupabaseConfigured
-  ? createClient(supabaseUrl!, supabaseKey!)
-  : null;
+export const ALLOWED_FILE_KINDS = [
+  "photo",
+  "sig_student",
+  "sig_parent",
+  "cet_order",
+  "marks_card",
+  "income_cert",
+  "aadhaar",
+  "fee_receipt",
+  "principal_cert",
+] as const;
 
-import os from 'os';
+export type AllowedFileKind = typeof ALLOWED_FILE_KINDS[number];
 
-const BUCKET_NAME = 'application-files';
-
-function getLocalStorageDir(): string {
-  if (process.env.VERCEL) {
-    const tmp = path.join(os.tmpdir(), 'sit_storage');
-    try {
-      if (!fs.existsSync(tmp)) fs.mkdirSync(tmp, { recursive: true });
-      return tmp;
-    } catch {
-      return os.tmpdir();
-    }
-  }
-
-  const local = path.join(process.cwd(), '.data', 'storage');
-  try {
-    if (!fs.existsSync(local)) fs.mkdirSync(local, { recursive: true });
-    return local;
-  } catch {
-    const tmp = path.join(os.tmpdir(), 'sit_storage');
-    try {
-      if (!fs.existsSync(tmp)) fs.mkdirSync(tmp, { recursive: true });
-      return tmp;
-    } catch {
-      return os.tmpdir();
-    }
-  }
+export function isValidFileKind(kind: string): kind is AllowedFileKind {
+  return (ALLOWED_FILE_KINDS as readonly string[]).includes(kind);
 }
 
-const LOCAL_STORAGE_DIR = getLocalStorageDir();
+/**
+ * Detects file type from magic bytes (header inspection).
+ */
+export function detectMimeFromBytes(buffer: Buffer): { mime: string; ext: string } | null {
+  if (
+    buffer.length >= 4 &&
+    buffer[0] === 0x25 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x44 &&
+    buffer[3] === 0x46
+  ) {
+    return { mime: "application/pdf", ext: "pdf" };
+  }
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return { mime: "image/jpeg", ext: "jpg" };
+  }
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) {
+    return { mime: "image/png", ext: "png" };
+  }
+  if (buffer.length >= 12 && buffer.toString("ascii", 8, 12) === "WEBP") {
+    return { mime: "image/webp", ext: "webp" };
+  }
+  return null;
+}
+
+/**
+ * Generates safe storage path: `${applicationId}/${kind}-${uuid}.${ext}`
+ */
+export function generateStoragePath(applicationId: string, kind: string, ext: string): string {
+  const safeId = crypto.randomUUID();
+  return `${applicationId}/${kind}-${safeId}.${ext}`;
+}
 
 export const storage = {
-  isCloud: () => isSupabaseConfigured,
+  isCloud: () => true,
 
   /**
-   * Saves a file buffer either to Supabase Cloud Storage or local disk
+   * Saves a file buffer strictly to private Supabase Cloud Storage bucket 'application-files'.
+   * Never falls back to local disk. Throws error on failure.
    */
   async saveFile(filename: string, buffer: Buffer, mime: string): Promise<string> {
-    if (isSupabaseConfigured && supabase) {
-      try {
-        const { error } = await supabase.storage
-          .from(BUCKET_NAME)
-          .upload(filename, buffer, {
-            contentType: mime,
-            upsert: true,
-          });
+    const supabase = getAdminClient();
+    const { error } = await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(filename, buffer, {
+        contentType: mime,
+        upsert: true,
+      });
 
-        if (error) {
-          console.error('[Storage] Supabase upload failed, falling back to disk:', error.message);
-          const filePath = path.join(LOCAL_STORAGE_DIR, filename);
-          fs.writeFileSync(filePath, buffer);
-          return filename;
-        }
-
-        return filename;
-      } catch (err) {
-        console.error('[Storage] Cloud storage exception, fallback to disk:', err);
-        const filePath = path.join(LOCAL_STORAGE_DIR, filename);
-        fs.writeFileSync(filePath, buffer);
-        return filename;
-      }
+    if (error) {
+      console.error(`[Storage] Failed to upload file ${filename}:`, error.message);
+      throw new Error(`Cloud storage upload failed: ${error.message}`);
     }
 
-    // Default local disk storage
-    const filePath = path.join(LOCAL_STORAGE_DIR, filename);
-    fs.writeFileSync(filePath, buffer);
     return filename;
   },
 
   /**
-   * Retrieves a file buffer from Supabase Cloud Storage or local disk
+   * Retrieves a file buffer strictly from private Supabase Cloud Storage.
    */
   async getFileBuffer(filename: string): Promise<Buffer | null> {
-    if (isSupabaseConfigured && supabase) {
-      try {
-        const { data, error } = await supabase.storage
-          .from(BUCKET_NAME)
-          .download(filename);
+    try {
+      const supabase = getAdminClient();
+      const { data, error } = await supabase.storage
+        .from(BUCKET_NAME)
+        .download(filename);
 
-        if (!error && data) {
-          const arrayBuffer = await data.arrayBuffer();
-          return Buffer.from(arrayBuffer);
-        }
-      } catch (err) {
-        console.warn('[Storage] Cloud download exception, trying disk fallback:', err);
+      if (error || !data) {
+        return null;
       }
-    }
 
-    // Fallback to local disk
-    const filePath = path.join(LOCAL_STORAGE_DIR, filename);
-    if (!fs.existsSync(filePath)) {
+      const arrayBuffer = await data.arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    } catch {
       return null;
     }
-    return fs.readFileSync(filePath);
   },
 
   /**
-   * Generates a secure temporary signed URL for browser viewing/downloading
+   * Generates a short-lived temporary signed URL for verified browser downloading/viewing.
+   * Bucket remains strictly private.
    */
-  async getSignedUrl(filename: string, expiresInSeconds: number = 3600): Promise<string | null> {
-    if (isSupabaseConfigured && supabase) {
-      try {
-        const { data, error } = await supabase.storage
-          .from(BUCKET_NAME)
-          .createSignedUrl(filename, expiresInSeconds);
+  async getSignedUrl(filename: string, expiresInSeconds: number = 300): Promise<string | null> {
+    try {
+      const supabase = getAdminClient();
+      const { data, error } = await supabase.storage
+        .from(BUCKET_NAME)
+        .createSignedUrl(filename, expiresInSeconds);
 
-        if (!error && data?.signedUrl) {
-          return data.signedUrl;
-        }
-      } catch (err) {
-        console.error('[Storage] Failed to generate signed URL:', err);
+      if (error || !data?.signedUrl) {
+        return null;
       }
+
+      return data.signedUrl;
+    } catch {
+      return null;
     }
-    return null;
+  },
+
+  /**
+   * Deletes a file from Supabase Cloud Storage.
+   */
+  async deleteFile(filename: string): Promise<boolean> {
+    try {
+      const supabase = getAdminClient();
+      const { error } = await supabase.storage
+        .from(BUCKET_NAME)
+        .remove([filename]);
+
+      return !error;
+    } catch {
+      return false;
+    }
   },
 };

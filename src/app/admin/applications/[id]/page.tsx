@@ -4,6 +4,7 @@ import React, { useState, useEffect, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import EligibilityPanel from '@/components/EligibilityPanel';
+import { ApplicationRecord, Scholarship, ApplicationFileRecord, RemarkRecord } from '@/lib/types';
 
 export default function AdminApplicationDetailPage({
   params,
@@ -13,16 +14,15 @@ export default function AdminApplicationDetailPage({
   const router = useRouter();
   const { id } = use(params);
 
-  const [application, setApplication] = useState<any>(null);
-  const [scholarship, setScholarship] = useState<any>(null);
-  const [files, setFiles] = useState<any[]>([]);
-  const [remarks, setRemarks] = useState<any[]>([]);
-  const [session, setSession] = useState<any>(null);
+  const [application, setApplication] = useState<ApplicationRecord | null>(null);
+  const [scholarship, setScholarship] = useState<Scholarship | null>(null);
+  const [files, setFiles] = useState<ApplicationFileRecord[]>([]);
+  const [remarks, setRemarks] = useState<RemarkRecord[]>([]);
+  const [session, setSession] = useState<{ userId: string; role: string; fullName: string; email: string } | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Form states for decisions and notes
   const [decisionRemark, setDecisionRemark] = useState('');
-  const [decisionAction, setDecisionAction] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [internalNote, setInternalNote] = useState('');
   const [message, setMessage] = useState<string | null>(null);
@@ -31,7 +31,7 @@ export default function AdminApplicationDetailPage({
     fetch('/api/auth/session')
       .then((res) => res.json())
       .then((sess) => {
-        if (!sess.authenticated || sess.user.role !== 'admin') {
+        if (!sess.authenticated || (sess.user.role !== 'admin' && sess.user.role !== 'reviewer')) {
           router.push('/login');
           return;
         }
@@ -83,7 +83,6 @@ export default function AdminApplicationDetailPage({
 
       if (res.ok) {
         setApplication(data.application);
-        setDecisionAction(null);
         setDecisionRemark('');
         setMessage(`Action '${action.toUpperCase()}' completed successfully and notification dispatched.`);
         // Reload remarks
@@ -101,18 +100,39 @@ export default function AdminApplicationDetailPage({
 
   const handleToggleHardCopy = async (received: boolean) => {
     try {
+      const res = await fetch(`/api/admin/applications/${id}/hard-copy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hard_copy_received: received }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setApplication(data.application);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleRecommendation = async (recStatus: 'recommended' | 'not_recommended') => {
+    const note = prompt(`Enter ${recStatus.toUpperCase()} recommendation remark for candidate:`) || '';
+    try {
       const res = await fetch(`/api/admin/applications/${id}/decision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'under_review',
-          hard_copy_received: received,
-          remark: received ? 'Physical signed hard copy received in Accounts Section' : undefined,
+          action: 'recommendation',
+          recommendation_status: recStatus,
+          recommendation_note: note,
         }),
       });
       if (res.ok) {
         const data = await res.json();
         setApplication(data.application);
+        fetch(`/api/applications/${id}`).then((r) => r.json()).then((d) => setRemarks(d.remarks || []));
+      } else {
+        const err = await res.json();
+        alert(`Error: ${err.error?.message || 'Failed'}`);
       }
     } catch (err) {
       console.error(err);
@@ -143,7 +163,7 @@ export default function AdminApplicationDetailPage({
     }
   };
 
-  if (loading) {
+  if (loading || !application) {
     return (
       <div className="mx-auto max-w-6xl px-4 py-16 text-center text-xs text-gray-600">
         Loading application details for scrutiny...
@@ -151,7 +171,7 @@ export default function AdminApplicationDetailPage({
     );
   }
 
-  const appData = application?.data || {};
+  const appData = application.data || {};
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
@@ -244,7 +264,7 @@ export default function AdminApplicationDetailPage({
                 <div><span className="text-gray-500 font-medium">7. c) Percentage:</span> <span className="font-bold text-[#AC3D47]">{appData.percentage}%</span></div>
                 {appData.cgpa && <div><span className="text-gray-500 font-medium">CGPA (Years 2–4):</span> <span className="font-bold font-mono">{appData.cgpa} / 10.0</span></div>}
                 <div><span className="text-gray-500 font-medium">Calculated Merit Score:</span> <span className="font-mono font-bold text-base text-[#AC3D47]">{application.merit_score}</span></div>
-                {appData.year_of_study > 1 && (
+                {(appData.year_of_study ?? 0) > 1 && (
                   <div><span className="text-gray-500 font-medium">Backlog History:</span> <span className={appData.has_backlog_history ? 'text-red-700 font-bold' : 'text-emerald-700 font-bold'}>{appData.has_backlog_history ? 'Has Backlog (Disqualified)' : 'Zero Backlogs (Eligible)'}</span></div>
                 )}
               </div>
@@ -388,8 +408,30 @@ export default function AdminApplicationDetailPage({
                   </div>
                 </>
               ) : (
-                <div className="text-gray-600 text-xs">
-                  Reviewer accounts may record recommendations and remarks. Final Accept/Reject is executed by Committee Admin.
+                <div className="space-y-3 pt-2 text-xs">
+                  <div className="font-bold text-gray-700">Department / Proctor Recommendation:</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleRecommendation('recommended')}
+                      className="gov-btn bg-emerald-700 text-white hover:bg-emerald-800 text-xs py-2 font-bold"
+                    >
+                      ✓ Recommend
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRecommendation('not_recommended')}
+                      className="gov-btn bg-red-700 text-white hover:bg-red-800 text-xs py-2 font-bold"
+                    >
+                      ✗ Do Not Recommend
+                    </button>
+                  </div>
+                  <div className="text-[11px] text-gray-600 bg-gray-50 p-2 border border-gray-200">
+                    Current Recommendation: <strong className="uppercase text-[#AC3D47]">{application.recommendation_status || 'Pending'}</strong>
+                    {application.recommendation_note && (
+                      <div className="mt-1 text-gray-500">Note: {application.recommendation_note}</div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

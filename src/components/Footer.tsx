@@ -2,10 +2,11 @@
 
 import React from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useLanguage } from './LanguageToggle';
 
 export default function Footer() {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
 
   return (
     <footer className="mt-auto border-t border-gray-300 bg-[#F8FAFC] text-gray-700 text-xs">
@@ -15,11 +16,12 @@ export default function Footer() {
         <div className="border-b border-gray-300 pb-8 mb-8">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
             <div className="flex items-start sm:items-center gap-4">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              <Image
                 src="/sit-logo.png"
                 alt="SIT Logo"
-                className="h-16 w-auto object-contain shrink-0"
+                width={64}
+                height={64}
+                className="h-16 w-16 object-contain shrink-0"
               />
               <div>
                 <h2 className="font-bold text-[#AC3D47] text-base sm:text-lg uppercase tracking-wide">
@@ -76,6 +78,18 @@ export default function Footer() {
               >
                 <svg className="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/></svg>
                 YouTube
+              </a>
+              <a
+                href="https://github.com/Aditya-J07"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 text-gray-700 hover:text-[#AC3D47] hover:border-[#AC3D47] font-semibold text-[11px] transition-colors"
+                title="GitHub"
+              >
+                <svg className="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24">
+                  <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+                </svg>
+                GitHub
               </a>
             </div>
           </div>
@@ -187,13 +201,13 @@ export default function Footer() {
               {t.footer_anti_ragging_title}
             </h3>
             <div className="bg-white border border-gray-200 p-3 mb-4 leading-relaxed">
-              <div className="font-bold text-gray-800">Dr. K V Suresh</div>
-              <div className="text-[11px] text-gray-500">Anti Ragging Nodal Officer</div>
+              <div className="font-bold text-gray-800">SIT Scholarship Cell / Helpdesk</div>
+              <div className="text-[11px] text-gray-500">{/* TODO [COLLEGE DECISION REQUIRED]: Designate official nodal officer */}Nodal Officer (Scholarships)</div>
               <div className="mt-1 font-mono text-[#AC3D47]">
-                <a href="mailto:antiragging@sit.ac.in" className="hover:underline">antiragging@sit.ac.in</a>
+                <span className="text-gray-700">TODO_HELPDESK_EMAIL</span>
               </div>
               <div className="font-mono text-[11px] text-gray-700 mt-0.5">
-                +91 9480408091 • 0816-2214002
+                0816-2214002
               </div>
             </div>
 
@@ -202,13 +216,7 @@ export default function Footer() {
             </h3>
             <div className="space-y-1 text-gray-600 font-mono text-[11px]">
               <div>
-                <a href="mailto:placements@sit.ac.in" className="hover:text-[#AC3D47] hover:underline">placements@sit.ac.in</a>
-              </div>
-              <div>
-                <a href="mailto:chowdarikk@sit.ac.in" className="hover:text-[#AC3D47] hover:underline">chowdarikk@sit.ac.in</a>
-              </div>
-              <div>
-                <a href="mailto:santhosh@sit.ac.in" className="hover:text-[#AC3D47] hover:underline">santhosh@sit.ac.in</a>
+                <span>TODO_PLACEMENT_CONTACT</span>
               </div>
             </div>
           </div>
@@ -221,9 +229,9 @@ export default function Footer() {
             <div className="space-y-1.5 text-gray-600 mb-4 leading-relaxed">
               <div>
                 <span className="font-semibold text-gray-700">Principal Office:</span>
-                <a href="mailto:principal@sit.ac.in" className="block font-mono text-[#AC3D47] hover:underline">
-                  principal@sit.ac.in
-                </a>
+                <span className="block font-mono text-[#AC3D47]">
+                  TODO_PRINCIPAL_OFFICE_EMAIL
+                </span>
               </div>
               <div className="font-mono text-[11px] space-y-0.5">
                 <div>+91 816 - 2282696</div>
@@ -238,7 +246,7 @@ export default function Footer() {
             <div className="text-gray-600 space-y-1 text-[11px] leading-relaxed">
               <div>{t.footer_contact_hours}</div>
               <div className="font-mono text-[#AC3D47]">
-                <a href="mailto:scholarships@sit.ac.in" className="hover:underline">scholarships@sit.ac.in</a>
+                <span>TODO_SCHOLARSHIP_EMAIL</span>
               </div>
               <div className="font-mono">0816-2214000</div>
               <div>Administrative Block, Ground Floor</div>
@@ -247,8 +255,25 @@ export default function Footer() {
 
         </div>
 
-        {/* DPDP Act 2023 Compliance & Privacy Notice */}
+        {/* Public & Legal Links & DPDP Notice */}
         <div className="border-t border-gray-200 pt-4 pb-2">
+          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs font-semibold text-[#AC3D47] mb-3">
+            <Link href="/privacy" className="hover:underline">
+              {lang === 'kn' ? 'ಗೌಪ್ಯತಾ ನೀತಿ (DPDP Act 2023)' : 'Privacy Policy (DPDP)'}
+            </Link>
+            <span className="text-gray-300">•</span>
+            <Link href="/terms" className="hover:underline">
+              {lang === 'kn' ? 'ಬಳಕೆಯ ನಿಯಮಗಳು' : 'Terms of Use'}
+            </Link>
+            <span className="text-gray-300">•</span>
+            <Link href="/faq" className="hover:underline">
+              {lang === 'kn' ? 'ಸಾಮಾನ್ಯ ಪ್ರಶ್ನೆಗಳು (FAQ)' : 'Frequently Asked Questions (FAQ)'}
+            </Link>
+            <span className="text-gray-300">•</span>
+            <Link href="/accessibility" className="hover:underline">
+              {lang === 'kn' ? 'ಪ್ರವೇಶಸಾಧ್ಯತೆ ಹೇಳಿಕೆ' : 'Accessibility Statement'}
+            </Link>
+          </div>
           <div className="bg-white border border-gray-300 p-3 text-gray-600 leading-relaxed text-[11px]">
             <span className="font-bold text-[#AC3D47]">{t.footer_dpdp_title} </span>
             {t.footer_dpdp_text}

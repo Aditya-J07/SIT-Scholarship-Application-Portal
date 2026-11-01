@@ -1,20 +1,27 @@
 import { NextResponse } from 'next/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { getAuthorizedSession } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { generateApplicationPdf } from '@/lib/pdf/generatePdf';
 import { storage } from '@/lib/storage';
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
+  const { session, errorResponse } = await getAuthorizedSession();
+  if (errorResponse) {
+    return errorResponse;
+  }
+
+  // Rate limit: 10 PDF generations per hour per user
+  const rateLimit = await checkRateLimit(`pdf_gen:user:${session.userId}`, 3600, 10);
+  if (!rateLimit.allowed) {
+    return rateLimitResponse(rateLimit.retryAfter);
   }
 
   const { id } = await params;
-  const application = db.findApplicationById(id);
+  const application = await db.findApplicationById(id);
   if (!application) {
     return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
   }
@@ -24,10 +31,19 @@ export async function GET(
     return NextResponse.json({ error: { message: 'Forbidden' } }, { status: 403 });
   }
 
+  // Reviewers must never receive an unmasked PDF document (Phase 3c Item 3)
+  // Restrict PDF route strictly to the owning student and administrators.
+  if (session.role === 'reviewer') {
+    return NextResponse.json(
+      { error: { message: 'Forbidden: Reviewers are restricted from accessing unmasked application PDF documents' } },
+      { status: 403 }
+    );
+  }
+
   const { searchParams } = new URL(request.url);
   const forceDraft = searchParams.get('draft') === 'true';
 
-  const scholarship = db.findScholarshipByCode(application.data.scholarship_code || 'MNC');
+  const scholarship = await db.findScholarshipByCode(application.data.scholarship_code || 'MNC');
   if (!scholarship) {
     return NextResponse.json({ error: { message: 'Scholarship not found' } }, { status: 404 });
   }
@@ -41,6 +57,7 @@ export async function GET(
         headers: {
           'Content-Type': 'application/pdf',
           'Content-Disposition': `inline; filename="${application.ref_no}.pdf"`,
+          'X-Content-Type-Options': 'nosniff',
         },
       });
     }
@@ -56,6 +73,7 @@ export async function GET(
       headers: {
         'Content-Type': 'application/pdf',
         'Content-Disposition': `inline; filename="${application.ref_no}_${isDraft ? 'DRAFT' : 'OFFICIAL'}.pdf"`,
+        'X-Content-Type-Options': 'nosniff',
       },
     });
   } catch (err: unknown) {

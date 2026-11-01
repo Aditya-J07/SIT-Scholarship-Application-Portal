@@ -1,81 +1,207 @@
-import crypto from 'crypto';
-import { cookies } from 'next/headers';
-import { UserProfile, UserRole } from '../types';
-
-const SECRET_KEY = process.env.JWT_SECRET || 'sit-scholarship-portal-super-secret-key-2026-secure-random';
-const SESSION_COOKIE_NAME = 'sit_session';
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { createClient } from "@/utils/supabase/server";
+import { db } from "../db";
+import { UserRole } from "../types";
 
 export interface SessionPayload {
   userId: string;
   email: string;
   role: UserRole;
   fullName: string;
-  exp: number;
+  mustChangePassword: boolean;
+  bank_acc_last4?: string;
+  aal?: "aal1" | "aal2";
+  last_seen_at?: string;
+  exp?: number;
 }
 
-export function signToken(payload: Omit<SessionPayload, 'exp'>, expiresInHours = 24): string {
-  const exp = Math.floor(Date.now() / 1000) + expiresInHours * 3600;
-  const fullPayload: SessionPayload = { ...payload, exp };
-  const encodedPayload = Buffer.from(JSON.stringify(fullPayload)).toString('base64url');
-  const signature = crypto
-    .createHmac('sha256', SECRET_KEY)
-    .update(encodedPayload)
-    .digest('base64url');
-  return `${encodedPayload}.${signature}`;
-}
-
-export function verifyToken(token: string): SessionPayload | null {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 2) return null;
-    const [encodedPayload, signature] = parts;
-    const expectedSig = crypto
-      .createHmac('sha256', SECRET_KEY)
-      .update(encodedPayload)
-      .digest('base64url');
-    if (signature !== expectedSig) return null;
-
-    const json = Buffer.from(encodedPayload, 'base64url').toString('utf-8');
-    const payload = JSON.parse(json) as SessionPayload;
-    if (payload.exp < Math.floor(Date.now() / 1000)) return null;
-
-    return payload;
-  } catch {
-    return null;
-  }
-}
-
+/**
+ * Validates the current session using Supabase Auth (via Next.js cookies)
+ * and retrieves the verified, live profile and role directly from the PostgreSQL profiles table.
+ * Roles are strictly database-controlled; never read from client tokens or user_metadata.
+ */
 export async function getCurrentSession(): Promise<SessionPayload | null> {
   try {
-    const cookieStore = await cookies();
-    const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
-    if (!token) return null;
-    return verifyToken(token);
+    try {
+      const cookieStore = await cookies();
+      const allCookies = cookieStore.getAll();
+      const hasAuthCookie = allCookies.some(
+        (c) => c.name.startsWith("sb-") || c.name.includes("-auth-token")
+      );
+      if (!hasAuthCookie) {
+        return null;
+      }
+    } catch {
+      // Outside Next.js request context (tests or cron); proceed to createClient
+    }
+
+    const supabase = await createClient();
+    let authUserRes = await supabase.auth.getUser();
+    if (
+      authUserRes.error &&
+      (authUserRes.error.message?.includes("fetch failed") ||
+        authUserRes.error.message?.includes("ECONNRESET") ||
+        authUserRes.error.status === 502 ||
+        authUserRes.error.status === 503)
+    ) {
+      await new Promise((r) => setTimeout(r, 400));
+      authUserRes = await supabase.auth.getUser();
+    }
+    const { data: { user } = { user: null }, error } = authUserRes;
+
+    if (error || !user) {
+      return null;
+    }
+
+    // Always fetch live profile from Postgres using the verified user ID
+    const profile = await db.findUserById(user.id);
+    if (!profile) {
+      // If profile has not yet finished creating (race condition on signup), default safely to student
+      return {
+        userId: user.id,
+        email: user.email || "",
+        role: "student",
+        fullName: "",
+        mustChangePassword: false,
+      };
+    }
+
+    let aal: "aal1" | "aal2" = "aal1";
+    try {
+      const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      if (aalData?.currentLevel === "aal2") {
+        aal = "aal2";
+      }
+    } catch {
+      aal = "aal1";
+    }
+
+    return {
+      userId: user.id,
+      email: profile.email || user.email || "",
+      role: profile.role, // Always use live role from PostgreSQL profiles.role
+      fullName: profile.full_name,
+      mustChangePassword: profile.must_change_password ?? false,
+      bank_acc_last4: profile.bank_acc_last4,
+      aal,
+      last_seen_at: profile.last_seen_at,
+    };
   } catch {
     return null;
   }
 }
 
-export async function setSessionCookie(user: UserProfile) {
-  const cookieStore = await cookies();
-  const token = signToken({
-    userId: user.id,
-    email: user.email,
-    role: user.role,
-    fullName: user.full_name,
-  });
+/**
+ * Enforces staff security requirements:
+ * 1. must_change_password compliance (returns 403 PASSWORD_CHANGE_REQUIRED)
+ * 2. 30-minute idle session timeout via last_seen_at (returns 401 IDLE_TIMEOUT)
+ * 3. Authenticator Assurance Level 2 (TOTP verified) (returns 403 MFA_REQUIRED)
+ * Returns null if compliant or if caller is a student.
+ */
+export function enforceStaffSession(
+  session: SessionPayload,
+  options?: { allowMustChangePassword?: boolean }
+): NextResponse | null {
+  if (session.role === "admin" || session.role === "reviewer") {
+    // 1. Enforce must_change_password compliance for staff accounts
+    if (session.mustChangePassword && !options?.allowMustChangePassword) {
+      return NextResponse.json(
+        {
+          code: "PASSWORD_CHANGE_REQUIRED",
+          error: {
+            message: "Password change is required before accessing administrative or portal features.",
+          },
+        },
+        { status: 403 }
+      );
+    }
 
-  cookieStore.set(SESSION_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 24 * 3600,
-  });
-  return token;
+    // 2. Enforce 30-minute server-side idle timeout for staff accounts
+    if (session.last_seen_at) {
+      const lastSeenMs = new Date(session.last_seen_at).getTime();
+      const idleMinutes = (Date.now() - lastSeenMs) / (1000 * 60);
+      if (idleMinutes > 30) {
+        return NextResponse.json(
+          {
+            code: "IDLE_TIMEOUT",
+            error: {
+              message: "Staff session timed out due to 30 minutes of inactivity. Please log in again.",
+            },
+          },
+          { status: 401 }
+        );
+      }
+    }
+
+    // 3. Enforce TOTP MFA (aal2) for staff accounts: staff at aal1 get zero student or admin data
+    if (session.aal !== "aal2") {
+      return NextResponse.json(
+        {
+          code: "MFA_REQUIRED",
+          error: {
+            message: "Multi-factor authentication (TOTP) verification is required for staff access.",
+          },
+        },
+        { status: 403 }
+      );
+    }
+  }
+
+  return null;
 }
 
-export async function clearSessionCookie() {
-  const cookieStore = await cookies();
-  cookieStore.delete(SESSION_COOKIE_NAME);
+/**
+ * Shared session helper for all protected routes (student & staff).
+ * Validates the session, enforces staff idle & aal2 constraints,
+ * and updates staff last_seen_at timestamp on active requests.
+ */
+export async function getAuthorizedSession(options?: {
+  allowMustChangePassword?: boolean;
+}): Promise<
+  { session: SessionPayload; errorResponse: null } | { session: null; errorResponse: NextResponse }
+> {
+  const session = await getCurrentSession();
+  if (!session) {
+    return {
+      session: null,
+      errorResponse: NextResponse.json(
+        { error: { message: "Unauthorized" } },
+        { status: 401 }
+      ),
+    };
+  }
+
+  const staffSecurityError = enforceStaffSession(session, options);
+  if (staffSecurityError) {
+    return { session: null, errorResponse: staffSecurityError };
+  }
+
+  // Update staff last_seen timestamp on valid active request
+  if (session.role === "admin" || session.role === "reviewer") {
+    try {
+      await db.updateStaffLastSeen(session.userId);
+    } catch {
+      // Non-fatal if DB activity write fails
+    }
+  }
+
+  return { session, errorResponse: null };
+}
+
+/**
+ * Returns a 403 response if mustChangePassword is true, or null if compliant.
+ * Can be used by API routes to enforce password changes server-side.
+ */
+export function assertPasswordChanged(session: SessionPayload): NextResponse | null {
+  if (session.mustChangePassword) {
+    return NextResponse.json(
+      {
+        code: "PASSWORD_CHANGE_REQUIRED",
+        error: { message: "Password change is required before accessing portal features." },
+      },
+      { status: 403 }
+    );
+  }
+  return null;
 }

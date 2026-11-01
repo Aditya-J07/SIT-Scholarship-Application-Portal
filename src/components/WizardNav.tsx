@@ -10,6 +10,8 @@ interface WizardNavProps {
   onNext?: () => void;
   onPrev?: () => void;
   isSaving?: boolean;
+  isDirty?: boolean;
+  lastSavedTime?: string | null;
   canProceed?: boolean;
   nextLabel?: string;
 }
@@ -19,6 +21,8 @@ export default function WizardNav({
   totalSteps = 7,
   onStepClick,
   isSaving = false,
+  isDirty = false,
+  lastSavedTime = null,
 }: WizardNavProps) {
   const { t, lang } = useLanguage();
 
@@ -41,9 +45,16 @@ export default function WizardNav({
         </div>
         <div className="flex items-center gap-2 mt-1 sm:mt-0 text-gray-600">
           {isSaving ? (
-            <span className="text-amber-700 font-semibold animate-pulse">{lang === 'kn' ? 'ಕರಡು ಉಳಿಸಲಾಗುತ್ತಿದೆ...' : 'Saving draft...'}</span>
+            <span className="text-amber-700 font-semibold">{lang === 'kn' ? 'ಕರಡು ಉಳಿಸಲಾಗುತ್ತಿದೆ...' : 'Saving draft...'}</span>
+          ) : isDirty ? (
+            <span className="text-amber-700 font-bold flex items-center gap-1">
+              <span className="inline-block w-2 h-2 rounded-full bg-amber-500"></span>
+              {lang === 'kn' ? 'ಉಳಿಸದ ಬದಲಾವಣೆಗಳಿವೆ' : 'Unsaved changes'}
+            </span>
           ) : (
-            <span className="text-emerald-700 font-medium">✓ {t.saved_just_now}</span>
+            <span className="text-emerald-700 font-medium">
+              ✓ {t.saved_just_now} {lastSavedTime ? `(${lastSavedTime})` : ''}
+            </span>
           )}
         </div>
       </div>

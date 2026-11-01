@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter, usePathname } from 'next/navigation';
 import LanguageToggle, { useLanguage } from './LanguageToggle';
 
@@ -13,16 +14,43 @@ export default function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
-    fetch('/api/auth/session')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.authenticated && data.user) {
-          setSession(data.user);
-        } else {
-          setSession(null);
-        }
-      })
-      .catch(() => setSession(null));
+    // If no Supabase auth cookie exists, user is unauthenticated; skip network fetch
+    if (typeof document !== 'undefined' && !document.cookie.includes('sb-')) {
+      setSession(null);
+      return;
+    }
+
+    let cancelled = false;
+    const checkSession = () => {
+      fetch('/api/auth/session')
+        .then((res) => res.json())
+        .then((data) => {
+          if (!cancelled) {
+            if (data.authenticated && data.user) {
+              setSession(data.user);
+            } else {
+              setSession(null);
+            }
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setSession(null);
+        });
+    };
+
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      const handle = (window as unknown as { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback(checkSession, { timeout: 1000 });
+      return () => {
+        cancelled = true;
+        (window as unknown as { cancelIdleCallback: (id: number) => void }).cancelIdleCallback?.(handle);
+      };
+    } else {
+      const timer = setTimeout(checkSession, 40);
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+      };
+    }
   }, [pathname]);
 
   const handleLogout = async () => {
@@ -40,58 +68,62 @@ export default function Header() {
           <div className="flex items-center gap-3">
             {/* SIT Official Seal Emblem */}
             <Link href="/" className="shrink-0 flex items-center">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              <Image
                 src="/sit-logo.png"
                 alt="Siddaganga Institute of Technology Official Logo"
-                className="h-14 w-auto object-contain"
+                width={56}
+                height={56}
+                priority
+                className="h-14 w-14 object-contain shrink-0"
               />
             </Link>
             <div>
               <div className="text-xs font-semibold tracking-wider text-gray-600 uppercase">
                 {t.college_society}
               </div>
-              <h1 className="text-base sm:text-lg font-bold text-[#AC3D47] leading-tight">
+              <div className="text-base sm:text-lg font-bold text-[#AC3D47] leading-tight">
                 {t.college_full.toUpperCase()}
-              </h1>
+              </div>
               <div className="text-xs text-gray-500 hidden sm:block">
                 {t.college_location} | {t.college_sub}
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 min-h-[38px]">
             <LanguageToggle />
-            {session ? (
-              <div className="hidden md:flex items-center gap-2 text-xs border border-gray-300 px-2 py-1 bg-white">
-                <span className="font-bold text-[#AC3D47]">{session.fullName}</span>
-                <span className="bg-gray-100 text-gray-700 px-1 py-0.5 uppercase text-[10px] border border-gray-200">
-                  {session.role}
-                </span>
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  className="text-red-700 font-semibold hover:underline ml-2"
-                >
-                  {t.logout}
-                </button>
-              </div>
-            ) : (
-              <div className="hidden md:flex items-center gap-2">
-                <Link
-                  href="/login"
-                  className="gov-btn gov-btn-outline text-xs px-3 py-1.5 min-h-[34px]"
-                >
-                  {t.login}
-                </Link>
-                <Link
-                  href="/register"
-                  className="gov-btn gov-btn-primary text-xs px-3 py-1.5 min-h-[34px]"
-                >
-                  {t.register}
-                </Link>
-              </div>
-            )}
+            <div className="hidden md:flex items-center min-h-[34px] min-w-[140px] justify-end">
+              {session ? (
+                <div className="flex items-center gap-2 text-xs border border-gray-300 px-2 py-1 bg-white">
+                  <span className="font-bold text-[#AC3D47]">{session.fullName}</span>
+                  <span className="bg-gray-100 text-gray-700 px-1 py-0.5 uppercase text-[10px] border border-gray-200">
+                    {session.role}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="text-red-700 font-semibold hover:underline ml-2"
+                  >
+                    {t.logout}
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <Link
+                    href="/login"
+                    className="gov-btn gov-btn-outline text-xs px-3 py-1.5 min-h-[34px]"
+                  >
+                    {t.login}
+                  </Link>
+                  <Link
+                    href="/register"
+                    className="gov-btn gov-btn-primary text-xs px-3 py-1.5 min-h-[34px]"
+                  >
+                    {t.register}
+                  </Link>
+                </div>
+              )}
+            </div>
             {/* Mobile Hamburger */}
             <button
               type="button"

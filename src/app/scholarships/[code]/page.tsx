@@ -2,19 +2,21 @@ import { notFound } from 'next/navigation';
 import { db } from '@/lib/db';
 import ScholarshipDetailContent from '@/components/ScholarshipDetailContent';
 
+export const dynamic = 'force-dynamic';
+
 export default async function ScholarshipDetailPage({
   params,
 }: {
   params: Promise<{ code: string }>;
 }) {
   const { code } = await params;
-  const scholarship = db.findScholarshipByCode(code);
+  const scholarship = await db.findScholarshipByCode(code);
 
   if (!scholarship) {
     notFound();
   }
 
-  const cycle = db.findActiveCycleForScholarship(scholarship.id);
+  const cycle = await db.findActiveCycleForScholarship(scholarship.id);
 
   return <ScholarshipDetailContent scholarship={scholarship} cycle={cycle} />;
 }

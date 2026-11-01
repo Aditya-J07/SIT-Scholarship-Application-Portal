@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { ApplicationRecord, Scholarship } from '../types';
 import { storage } from '../storage';
+import { decryptBankAccount } from '../crypto/field-encryption';
 
 export interface GeneratePdfOptions {
   isDraft?: boolean;
@@ -194,7 +195,6 @@ export async function generateApplicationPdf(
   const rowHeight = 22;
   const col1W = 28; // Number "1)"
   const col2W = 185; // Label
-  const col3W = tableWidth - col1W - col2W; // Value
 
   const drawRow = (
     num: string,
@@ -357,9 +357,18 @@ export async function generateApplicationPdf(
   // 12) Amount required
   drawRow('12)', 'Scholarship amount required :', `Rs. ${(appData.scholarship_amount_required_per_month || 0).toLocaleString('en-IN')} per month`);
 
-  // 13) Bank Account
+  // 13) Bank Account (signed form displays full account number)
+  let bankNumberDisplay = appData.bank_acc_no || '';
+  if (!bankNumberDisplay && appData.bank_acc_no_encrypted) {
+    try {
+      bankNumberDisplay = decryptBankAccount(appData.bank_acc_no_encrypted);
+    } catch {
+      bankNumberDisplay = appData.bank_acc_last4 ? `XXXX${appData.bank_acc_last4}` : '';
+    }
+  }
+
   drawRow('13)', 'Bank Account Details of Student', '', 56, [
-    { label: 'S.B. A/c. No. :', value: appData.bank_acc_no || '' },
+    { label: 'S.B. A/c. No. :', value: bankNumberDisplay },
     { label: 'Name of the Bank :', value: `${appData.bank_name || ''} (Holder: ${appData.bank_acc_holder_name || ''})` },
     { label: 'Branch Address :', value: appData.bank_branch || '' },
     { label: 'IFSC Code :', value: appData.bank_ifsc || '' },
@@ -377,7 +386,25 @@ export async function generateApplicationPdf(
     color: black,
   });
 
-  currY -= 14;
+  currY -= 12;
+
+  // Parental Consent for Minors (< 18 years on application date)
+  // TODO [COLLEGE DECISION REQUIRED]: Legal confirmation required for minor consent threshold and declaration wording.
+  const applicantAge = appData.dob ? calculateAge(appData.dob) : 18;
+  if (applicantAge < 18) {
+    const guardianName = appData.guardian_consent_name || appData.father_or_guardian_name || 'Parent/Guardian';
+    const minorConsentNotice = `TODO [COLLEGE DECISION REQUIRED]: Guardian Consent: I, ${guardianName}, lawful parent/guardian of minor applicant, consent to data processing under DPDP Act 2023.`;
+    page.drawText(minorConsentNotice, {
+      x: margin + 4,
+      y: currY,
+      size: 6.5,
+      font: fontBold,
+      color: primaryBrand,
+    });
+    currY -= 12;
+  }
+
+  currY -= 2;
 
   // Signatures Section
   const sigBoxHeight = 35;
@@ -481,7 +508,16 @@ export async function generateApplicationPdf(
       color: black,
     });
 
-    currY -= 50;
+    const recStatus = (application.recommendation_status || 'Pending').toUpperCase();
+    page.drawText(`Recommendation Status: ${recStatus}`, {
+      x: margin,
+      y: currY - 45,
+      size: 7,
+      font: fontBold,
+      color: recStatus === 'RECOMMENDED' ? rgb(0.1, 0.5, 0.2) : rgb(0.3, 0.3, 0.3),
+    });
+
+    currY -= 55;
   }
 
   // Enclosures List

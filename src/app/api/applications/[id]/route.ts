@@ -1,21 +1,25 @@
 import { NextResponse } from 'next/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { getAuthorizedSession } from '@/lib/auth/session';
+import { canReviewerAccessDepartment } from '@/lib/auth/admin-guard';
 import { db } from '@/lib/db';
 import { calculateMeritScore, calculatePercentage } from '@/lib/merit';
 import { evaluateEligibility } from '@/lib/eligibility';
-import { step1Schema, step2Schema, step3Schema, step4Schema, step5Schema } from '@/lib/schemas/application';
+import { step1Schema, step2Schema, step3Schema, step4Schema, step5Schema, step7Schema } from '@/lib/schemas/application';
+import { decryptBankAccount, encryptBankAccount, hashBankAccount } from '@/lib/crypto/field-encryption';
+import { verifyStateChangingOrigin } from '@/lib/auth/origin-guard';
+import { getClientIp } from '@/lib/rate-limit';
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
+  const { session, errorResponse } = await getAuthorizedSession();
+  if (errorResponse) {
+    return errorResponse;
   }
 
   const { id } = await params;
-  const application = db.findApplicationById(id);
+  const application = await db.findApplicationById(id);
   if (!application) {
     return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
   }
@@ -25,8 +29,21 @@ export async function GET(
     return NextResponse.json({ error: { message: 'Forbidden' } }, { status: 403 });
   }
 
-  const scholarship = db.findScholarshipByCode(application.data.scholarship_code || 'MNC');
-  const files = db.listFilesForApplication(application.id).map((f) => ({
+  // Reviewer department scoping: reviewer can only view applications matching their department
+  if (session.role === 'reviewer') {
+    const reviewer = await db.findUserById(session.userId);
+    const appDept = application.department || application.data?.department || application.data?.course;
+    if (!canReviewerAccessDepartment(reviewer?.department, appDept)) {
+      return NextResponse.json(
+        { error: { message: 'Forbidden: application outside reviewer department' } },
+        { status: 403 }
+      );
+    }
+  }
+
+  const scholarship = await db.findScholarshipByCode(application.data.scholarship_code || 'MNC');
+  const filesList = await db.listFilesForApplication(application.id);
+  const files = filesList.map((f) => ({
     id: f.id,
     kind: f.kind,
     original_name: f.original_name,
@@ -35,13 +52,118 @@ export async function GET(
     uploaded_at: f.uploaded_at,
     url: `/api/files/${f.id}`,
   }));
-  const remarks = db.listRemarksForApplication(application.id);
+
+  const allRemarks = await db.listRemarksForApplication(application.id);
+  // Never show internal remarks to the student unless marked visible_to_student
+  const remarks = session.role === 'student'
+    ? allRemarks.filter((r) => r.visible_to_student)
+    : allRemarks;
+
+  // Bank account access control (H1):
+  // - Owning student and Admin get decrypted full account number
+  // - Reviewers get masked account number
+  const appData = { ...application.data };
+
+  if (session.role === 'student' || session.role === 'admin') {
+    if (appData.bank_acc_no_encrypted) {
+      try {
+        appData.bank_acc_no = decryptBankAccount(appData.bank_acc_no_encrypted);
+        appData.confirm_bank_acc_no = appData.bank_acc_no;
+      } catch {
+        appData.bank_acc_no = '';
+      }
+    }
+    appData.is_masked = false;
+    delete (appData as Record<string, unknown>).bank_acc_no_encrypted;
+
+    // If admin views full bank details, log audit per M4 / H1
+    if (session.role === 'admin') {
+      const clientIp = getClientIp(request);
+      await db.logAudit({
+        actor_id: session.userId,
+        actor_email: session.email,
+        action: 'ADMIN_DECRYPT_BANK_ACCOUNT',
+        entity: 'applications',
+        entity_id: application.id,
+        meta: { student_id: application.student_id, ref_no: application.ref_no },
+        ip: clientIp,
+      });
+    }
+  } else if (session.role === 'reviewer') {
+    const last4 = appData.bank_acc_last4 || (appData.bank_acc_no ? appData.bank_acc_no.slice(-4) : '');
+    appData.bank_acc_no = last4 ? `XXXX${last4}` : 'XXXXXXXX';
+    appData.is_masked = true;
+    delete (appData as Record<string, unknown>).confirm_bank_acc_no;
+    delete (appData as Record<string, unknown>).bank_acc_no_encrypted;
+  }
+
+  // Status timeline built from timestamps and visible remarks
+  const correctionRemark = remarks.find((r) => r.kind === 'correction_request' || r.visible_to_student);
+  const timeline: { status: string; label: string; date?: string; note?: string; active: boolean; completed: boolean }[] = [
+    {
+      status: 'submitted',
+      label: 'Submitted',
+      date: application.submitted_at || undefined,
+      active: application.status === 'submitted',
+      completed: Boolean(application.submitted_at),
+    },
+    {
+      status: 'under_review',
+      label: 'Under Review',
+      date: ['under_review', 'needs_correction', 'shortlisted', 'accepted', 'rejected'].includes(application.status)
+        ? application.updated_at
+        : undefined,
+      active: application.status === 'under_review',
+      completed: ['under_review', 'needs_correction', 'shortlisted', 'accepted', 'rejected'].includes(application.status),
+    },
+  ];
+
+  if (application.status === 'needs_correction' || correctionRemark) {
+    timeline.push({
+      status: 'needs_correction',
+      label: 'Correction Requested',
+      date: correctionRemark?.created_at || (application.status === 'needs_correction' ? application.updated_at : undefined),
+      note: correctionRemark?.body || 'Committee requested corrections on your application.',
+      active: application.status === 'needs_correction',
+      completed: application.status !== 'needs_correction',
+    });
+  }
+
+  timeline.push({
+    status: 'shortlisted',
+    label: 'Shortlisted',
+    date: ['shortlisted', 'accepted'].includes(application.status) ? application.updated_at : undefined,
+    active: application.status === 'shortlisted',
+    completed: ['shortlisted', 'accepted'].includes(application.status),
+  });
+
+  if (application.status === 'rejected') {
+    timeline.push({
+      status: 'rejected',
+      label: 'Rejected',
+      date: application.updated_at,
+      active: true,
+      completed: true,
+    });
+  } else {
+    timeline.push({
+      status: 'accepted',
+      label: 'Accepted / Awarded',
+      date: application.status === 'accepted' ? application.updated_at : undefined,
+      active: application.status === 'accepted',
+      completed: application.status === 'accepted',
+    });
+  }
 
   return NextResponse.json({
-    application,
+    application: {
+      ...application,
+      data: appData,
+    },
     scholarship,
     files,
     remarks,
+    timeline,
   });
 }
 
@@ -49,22 +171,28 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
+  // 1. CSRF Origin Verification
+  const originErr = verifyStateChangingOrigin(request);
+  if (originErr) return originErr;
+
+  const { session, errorResponse } = await getAuthorizedSession();
+  if (errorResponse) {
+    return errorResponse;
   }
 
   const { id } = await params;
-  const application = db.findApplicationById(id);
+  const application = await db.findApplicationById(id);
   if (!application) {
     return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
   }
 
-  if (session.role === 'student' && application.student_id !== session.userId) {
+  // Only the owning student may edit their application. Reviewers and admins must be rejected with 403.
+  if (session.role !== 'student' || application.student_id !== session.userId) {
     return NextResponse.json({ error: { message: 'Forbidden' } }, { status: 403 });
   }
 
-  if (session.role === 'student' && application.status !== 'draft' && application.status !== 'needs_correction') {
+  // Owning student may only edit draft or needs_correction applications
+  if (application.status !== 'draft' && application.status !== 'needs_correction') {
     return NextResponse.json(
       { error: { message: 'Application is locked and cannot be edited after submission' } },
       { status: 400 }
@@ -73,57 +201,164 @@ export async function PATCH(
 
   try {
     const body = await request.json();
-    const { step, stepData } = body;
+    const { step, stepData, last_updated_at } = body;
 
-    // Optional validation per step (if step is specified)
-    if (step === 1 && stepData) {
-      const res = step1Schema.safeParse(stepData);
-      if (!res.success) {
+    // Reject client manipulation of forbidden server-computed / structural fields
+    const FORBIDDEN_CLIENT_KEYS = [
+      'status',
+      'ref_no',
+      'merit_score',
+      'percentage',
+      'eligibility_flags',
+      'student_id',
+      'cycle_id',
+    ];
+
+    for (const key of FORBIDDEN_CLIENT_KEYS) {
+      if (key in body || (stepData && typeof stepData === 'object' && key in stepData)) {
         return NextResponse.json(
-          { error: { message: res.error.issues[0].message, fields: res.error.flatten().fieldErrors } },
-          { status: 400 }
-        );
-      }
-    } else if (step === 2 && stepData) {
-      const res = step2Schema.safeParse(stepData);
-      if (!res.success) {
-        return NextResponse.json(
-          { error: { message: res.error.issues[0].message, fields: res.error.flatten().fieldErrors } },
-          { status: 400 }
-        );
-      }
-    } else if (step === 3 && stepData) {
-      const res = step3Schema.safeParse(stepData);
-      if (!res.success) {
-        return NextResponse.json(
-          { error: { message: res.error.issues[0].message, fields: res.error.flatten().fieldErrors } },
-          { status: 400 }
-        );
-      }
-    } else if (step === 4 && stepData) {
-      const res = step4Schema.safeParse(stepData);
-      if (!res.success) {
-        return NextResponse.json(
-          { error: { message: res.error.issues[0].message, fields: res.error.flatten().fieldErrors } },
-          { status: 400 }
-        );
-      }
-    } else if (step === 5 && stepData) {
-      const res = step5Schema.safeParse(stepData);
-      if (!res.success) {
-        return NextResponse.json(
-          { error: { message: res.error.issues[0].message, fields: res.error.flatten().fieldErrors } },
+          { error: { message: `Modification of '${key}' is prohibited from client payload.` } },
           { status: 400 }
         );
       }
     }
 
+    // Client may not change scholarship_code
+    if (
+      'scholarship_code' in body ||
+      (stepData &&
+        typeof stepData === 'object' &&
+        'scholarship_code' in stepData &&
+        stepData.scholarship_code !== application.data.scholarship_code)
+    ) {
+      return NextResponse.json(
+        { error: { message: "Modification of 'scholarship_code' is prohibited from client payload." } },
+        { status: 400 }
+      );
+    }
+
+    // Concurrency conflict check: last_updated_at is required on draft save; return 409 when stale or missing
+    if (!last_updated_at) {
+      return NextResponse.json(
+        { error: { message: 'last_updated_at timestamp is required for draft concurrency control.' } },
+        { status: 409 }
+      );
+    }
+
+    if (application.updated_at) {
+      const clientTime = new Date(last_updated_at).getTime();
+      const serverTime = new Date(application.updated_at).getTime();
+      if (isNaN(clientTime) || serverTime > clientTime + 1000) {
+        return NextResponse.json(
+          { error: { message: 'This draft was updated in another session. Please reload to avoid overwriting newer data.' } },
+          { status: 409 }
+        );
+      }
+    }
+
+    // Step must be integer 1 to 7
+    if (typeof step !== 'number' || step < 1 || step > 7 || !Number.isInteger(step)) {
+      return NextResponse.json(
+        { error: { message: 'Step must be an integer between 1 and 7' } },
+        { status: 400 }
+      );
+    }
+
+    // Validate with strict schema and extract parsed clean data (never trust client directly)
+    let validatedCleanData: Record<string, unknown> = {};
+
+    if (step === 1) {
+      const step1Input = {
+        scholarship_code: application.data.scholarship_code || 'MNC',
+        ...(stepData && typeof stepData === 'object' ? stepData : {}),
+      };
+      const res = step1Schema.safeParse(step1Input);
+      if (!res.success) {
+        return NextResponse.json(
+          { error: { message: res.error.issues[0]?.message || 'Invalid step 1 data', fields: res.error.flatten().fieldErrors } },
+          { status: 400 }
+        );
+      }
+      validatedCleanData = res.data;
+    } else if (step === 2) {
+      const res = step2Schema.safeParse(stepData);
+      if (!res.success) {
+        return NextResponse.json(
+          { error: { message: res.error.issues[0]?.message || 'Invalid step 2 data', fields: res.error.flatten().fieldErrors } },
+          { status: 400 }
+        );
+      }
+      validatedCleanData = res.data;
+    } else if (step === 3) {
+      const res = step3Schema.safeParse(stepData);
+      if (!res.success) {
+        return NextResponse.json(
+          { error: { message: res.error.issues[0]?.message || 'Invalid step 3 data', fields: res.error.flatten().fieldErrors } },
+          { status: 400 }
+        );
+      }
+      validatedCleanData = res.data;
+    } else if (step === 4) {
+      const res = step4Schema.safeParse(stepData);
+      if (!res.success) {
+        return NextResponse.json(
+          { error: { message: res.error.issues[0]?.message || 'Invalid step 4 data', fields: res.error.flatten().fieldErrors } },
+          { status: 400 }
+        );
+      }
+      validatedCleanData = res.data;
+    } else if (step === 5) {
+      const res = step5Schema.safeParse(stepData);
+      if (!res.success) {
+        return NextResponse.json(
+          { error: { message: res.error.issues[0]?.message || 'Invalid step 5 data', fields: res.error.flatten().fieldErrors } },
+          { status: 400 }
+        );
+      }
+      const rawBank = res.data.bank_acc_no;
+      const encBank = encryptBankAccount(rawBank);
+      const bankLast4 = rawBank.slice(-4);
+      validatedCleanData = {
+        ...res.data,
+        bank_acc_no_encrypted: encBank,
+        bank_acc_last4: bankLast4,
+      };
+      delete (validatedCleanData as Record<string, unknown>).bank_acc_no;
+      delete (validatedCleanData as Record<string, unknown>).confirm_bank_acc_no;
+    } else if (step === 6) {
+      // Step 6 is document uploads (files uploaded via /files endpoint)
+      validatedCleanData = {};
+    } else if (step === 7) {
+      const res = step7Schema.safeParse(stepData);
+      if (!res.success) {
+        return NextResponse.json(
+          { error: { message: res.error.issues[0]?.message || 'Invalid step 7 declaration data', fields: res.error.flatten().fieldErrors } },
+          { status: 400 }
+        );
+      }
+      validatedCleanData = res.data;
+    }
+
+    // Strip any forbidden or client-manipulable keys
+    delete (validatedCleanData as Record<string, unknown>).scholarship_code;
+    delete (validatedCleanData as Record<string, unknown>).status;
+    delete (validatedCleanData as Record<string, unknown>).ref_no;
+    delete (validatedCleanData as Record<string, unknown>).merit_score;
+    delete (validatedCleanData as Record<string, unknown>).percentage;
+    delete (validatedCleanData as Record<string, unknown>).hard_copy_received;
+
     const mergedData = {
       ...application.data,
-      ...(stepData || {}),
+      ...validatedCleanData,
+      scholarship_code: application.data.scholarship_code, // Preserved strictly from initial draft
     };
 
-    // Auto-calculate percentage
+    if (step === 5) {
+      delete (mergedData as Record<string, unknown>).bank_acc_no;
+      delete (mergedData as Record<string, unknown>).confirm_bank_acc_no;
+    }
+
+    // Auto-calculate percentage strictly on the server
     if (mergedData.marks_obtained && mergedData.marks_gross_total) {
       mergedData.percentage = calculatePercentage(
         mergedData.marks_obtained,
@@ -131,7 +366,7 @@ export async function PATCH(
       );
     }
 
-    const scholarship = db.findScholarshipByCode(mergedData.scholarship_code || 'MNC');
+    const scholarship = await db.findScholarshipByCode(mergedData.scholarship_code || 'MNC');
     const merit_score = calculateMeritScore(mergedData);
     const eligibility_flags = evaluateEligibility(
       mergedData,
@@ -139,16 +374,31 @@ export async function PATCH(
       scholarship?.code || 'MNC'
     );
 
-    const updated = db.updateApplication(id, {
-      data: mergedData,
-      current_step: typeof step === 'number' ? step : application.current_step,
-      merit_score,
-      computed: {
-        percentage: mergedData.percentage || 0,
+    const step5RawBank = step === 5 ? (stepData as Record<string, unknown>).bank_acc_no : undefined;
+    const computedBankHash = typeof step5RawBank === 'string' && step5RawBank ? hashBankAccount(step5RawBank) : undefined;
+
+    const updated = await db.updateApplication(
+      id,
+      {
+        data: mergedData,
+        current_step: step,
         merit_score,
-        eligibility_flags,
+        ...(computedBankHash ? { bank_acc_hash: computedBankHash } : {}),
+        computed: {
+          percentage: mergedData.percentage || 0,
+          merit_score,
+          eligibility_flags,
+        },
       },
-    });
+      last_updated_at
+    );
+
+    if (!updated) {
+      return NextResponse.json(
+        { error: { message: 'Draft conflict: This application was updated elsewhere. Please refresh to load the latest data.' } },
+        { status: 409 }
+      );
+    }
 
     return NextResponse.json({
       success: true,

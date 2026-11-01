@@ -1,137 +1,266 @@
 import { NextResponse } from 'next/server';
-import { getCurrentSession } from '@/lib/auth/session';
+import { requireAdminOrReviewer, canReviewerAccessDepartment } from '@/lib/auth/admin-guard';
 import { db } from '@/lib/db';
 import { sendNotification } from '@/lib/notifications';
+import { NotificationType } from '@/lib/notifications';
+import crypto from 'crypto';
+import { verifyStateChangingOrigin } from '@/lib/auth/origin-guard';
+import { getClientIp } from '@/lib/rate-limit';
+
+const ALLOWED_ACTIONS = new Set([
+  'recommendation',
+  'accept',
+  'reject',
+  'shortlist',
+  'correction',
+  'needs_correction',
+  'under_review',
+]);
+
+const ALLOWED_RECOMMENDATION_STATUSES = new Set([
+  'recommended',
+  'not_recommended',
+  'pending',
+]);
+
+// M2: Canonical status transition rules for administrative decisions
+const ALLOWED_DECISION_TRANSITIONS: Record<string, string[]> = {
+  submitted: ['under_review', 'needs_correction', 'rejected'],
+  under_review: ['needs_correction', 'shortlisted', 'accepted', 'rejected'],
+  shortlisted: ['accepted', 'rejected'],
+  needs_correction: ['under_review', 'rejected'],
+  rejected: [],
+  accepted: [],
+};
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getCurrentSession();
-  if (!session || session.role !== 'admin') {
-    return NextResponse.json({ error: { message: 'Unauthorized administrator access required' } }, { status: 403 });
-  }
+  // 1. CSRF Origin Verification
+  const originErr = verifyStateChangingOrigin(request);
+  if (originErr) return originErr;
+
+  const { session, errorResponse } = await requireAdminOrReviewer();
+  if (errorResponse) return errorResponse;
 
   const { id } = await params;
-  const application = db.findApplicationById(id);
+  const application = await db.findApplicationById(id);
   if (!application) {
     return NextResponse.json({ error: { message: 'Application not found' } }, { status: 404 });
   }
 
+  // M2: Draft applications cannot be decided
+  if (application.status === 'draft') {
+    return NextResponse.json(
+      { error: { message: 'Draft applications cannot be decided. Application must be submitted by the student first.' } },
+      { status: 409 }
+    );
+  }
+
+  // Reviewer department scoping
+  if (session.role === 'reviewer') {
+    const reviewer = await db.findUserById(session.userId);
+    const appDept = application.department || application.data?.department || application.data?.course;
+    if (!canReviewerAccessDepartment(reviewer?.department, appDept)) {
+      return NextResponse.json(
+        { error: { message: 'Forbidden: application outside reviewer department' } },
+        { status: 403 }
+      );
+    }
+  }
+
   try {
     const body = await request.json();
-    const { action, remark, hard_copy_received, recommendation_status, recommendation_note } = body;
+    const { action, remark, override_reason, hard_copy_received, recommendation_status, recommendation_note, is_override, admin_override } = body;
+    const effectiveRemark = override_reason || remark;
 
-    // Reviewer recommendation (HoD / Proctor)
+    // Validate action against allow-list (return 400, not 500)
+    if (!action || !ALLOWED_ACTIONS.has(action)) {
+      return NextResponse.json(
+        { error: { message: 'Invalid or missing action parameter' } },
+        { status: 400 }
+      );
+    }
+
+    const clientIp = getClientIp(request);
+
+    // Reviewer recommendation (HoD / Proctor) - accessible to both reviewer and admin
     if (action === 'recommendation') {
-      const updated = db.updateApplication(id, {
-        recommendation_status: recommendation_status || 'recommended',
+      const recStatus = recommendation_status || 'recommended';
+      if (!ALLOWED_RECOMMENDATION_STATUSES.has(recStatus)) {
+        return NextResponse.json(
+          { error: { message: 'Invalid recommendation_status parameter' } },
+          { status: 400 }
+        );
+      }
+
+      const updated = await db.updateApplication(id, {
+        recommendation_status: recStatus,
         recommendation_note: recommendation_note || remark,
       });
 
-      db.addRemark({
-        id: `rem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      await db.addRemark({
+        id: crypto.randomUUID(),
         application_id: id,
         author_id: session.userId,
         author_name: session.fullName,
         author_role: session.role,
         kind: 'recommendation',
-        body: `Recommendation marked as ${recommendation_status.toUpperCase()}: ${remark || 'Verified by HoD/Proctor'}`,
+        body: `Recommendation marked as ${recStatus.toUpperCase()}: ${remark || 'Verified by Reviewer/HoD'}`,
         created_at: new Date().toISOString(),
       });
 
-      db.logAudit({
+      await db.logAudit({
         actor_id: session.userId,
         actor_email: session.email,
         action: 'REVIEWER_RECOMMENDATION_RECORDED',
         entity: 'applications',
         entity_id: id,
-        meta: { recommendation_status, remark },
+        meta: { recommendation_status: recStatus, remark },
+        ip: clientIp,
       });
 
       return NextResponse.json({ success: true, application: updated });
     }
 
-    // Role check: Only admin can accept or reject
-    if (['accept', 'reject'].includes(action) && session.role !== 'admin') {
+    // Role check: Only admin can accept, reject, request correction, or shortlist
+    if (session.role !== 'admin') {
       return NextResponse.json(
-        { error: { message: 'Only Accounts / Committee Administrators can officially Accept or Reject applications' } },
+        { error: { message: 'Only Accounts / Committee Administrators can officially make application decisions or request corrections' } },
         { status: 403 }
       );
     }
 
+    let targetStatus = application.status;
+    let notifType: NotificationType | null = null;
+
+    if (action === 'accept') {
+      targetStatus = 'accepted';
+      notifType = 'APPLICATION_ACCEPTED';
+
+      // Item 6: SSKA (recommendation required): cannot move to accepted unless recommendation exists
+      const scholarship = await db.findScholarshipByCode(application.data.scholarship_code || 'MNC');
+      const requiresRec = Boolean(scholarship?.requires_recommendation || application.data.scholarship_code === 'SSKA');
+      if (requiresRec) {
+        const hasValidRec = application.recommendation_status && application.recommendation_status !== 'pending';
+        if (!hasValidRec) {
+          return NextResponse.json(
+            {
+              error: {
+                code: 'RECOMMENDATION_REQUIRED',
+                message: 'Cannot accept SSKA application: a recommendation from Proctor or Head of Department is required before acceptance.',
+              },
+            },
+            { status: 400 }
+          );
+        }
+      }
+    } else if (action === 'reject') {
+      targetStatus = 'rejected';
+      notifType = 'APPLICATION_REJECTED';
+    } else if (action === 'shortlist') {
+      targetStatus = 'shortlisted';
+      notifType = 'SHORTLISTED_FOR_AWARD';
+    } else if (action === 'correction' || action === 'needs_correction') {
+      targetStatus = 'needs_correction';
+      notifType = 'CORRECTION_REQUESTED';
+    } else if (action === 'under_review') {
+      targetStatus = 'under_review';
+    }
+
     if (action === 'reject' && (!remark || remark.trim().length === 0)) {
       return NextResponse.json(
-        { error: { message: 'A reason is mandatory when rejecting an application' } },
+        { error: { message: 'A rejection reason is mandatory' } },
         { status: 400 }
       );
     }
 
-    if (action === 'correction' && (!remark || remark.trim().length === 0)) {
+    if ((action === 'correction' || action === 'needs_correction') && (!remark || remark.trim().length === 0)) {
       return NextResponse.json(
         { error: { message: 'Please specify the exact correction instructions for the student' } },
         { status: 400 }
       );
     }
 
-    let newStatus = application.status;
-    let notifType: any = null;
+    // M2: Enforce status transition table and override rules
+    const hasOverrideFlag = Boolean(is_override || admin_override);
+    const hasOverrideReason = Boolean(effectiveRemark && effectiveRemark.trim().length > 0);
+    const validOverride = hasOverrideFlag && hasOverrideReason;
 
-    if (action === 'accept') {
-      newStatus = 'accepted';
-      notifType = 'APPLICATION_ACCEPTED';
-    } else if (action === 'reject') {
-      newStatus = 'rejected';
-      notifType = 'APPLICATION_REJECTED';
-    } else if (action === 'shortlist') {
-      newStatus = 'shortlisted';
-      notifType = 'SHORTLISTED_FOR_AWARD';
-    } else if (action === 'correction') {
-      newStatus = 'needs_correction';
-      notifType = 'CORRECTION_REQUESTED';
-    } else if (action === 'under_review') {
-      newStatus = 'under_review';
+    const isTerminalOrLocked = ['accepted', 'rejected', 'withdrawn', 'needs_correction'].includes(application.status);
+
+    if (isTerminalOrLocked) {
+      if (!validOverride) {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'INVALID_STATUS_TRANSITION',
+              message: `Cannot transition application from status '${application.status}' to '${targetStatus}' without an explicit administrator override and documented reason.`,
+            },
+          },
+          { status: 409 }
+        );
+      }
+    } else {
+      const allowedTargets = ALLOWED_DECISION_TRANSITIONS[application.status] || [];
+      if (!allowedTargets.includes(targetStatus) && !validOverride) {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'INVALID_STATUS_TRANSITION',
+              message: `Invalid status transition from '${application.status}' to '${targetStatus}'.`,
+            },
+          },
+          { status: 409 }
+        );
+      }
     }
 
-    const updated = db.updateApplication(id, {
-      status: newStatus,
+    const updated = await db.updateApplication(id, {
+      status: targetStatus,
       decided_at: new Date().toISOString(),
       decided_by: session.userId,
-      decision_remark: remark || undefined,
+      decision_remark: effectiveRemark || undefined,
       ...(hard_copy_received !== undefined && { hard_copy_received }),
     });
 
     // Record Remark thread entry
-    if (remark) {
-      db.addRemark({
-        id: `rem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    if (effectiveRemark) {
+      const isCorrection = action === 'correction' || action === 'needs_correction';
+      await db.addRemark({
+        id: crypto.randomUUID(),
         application_id: id,
         author_id: session.userId,
         author_name: session.fullName,
         author_role: session.role,
-        kind: action === 'correction' ? 'correction_request' : 'decision',
-        body: remark,
+        kind: isCorrection ? 'correction_request' : 'decision',
+        body: effectiveRemark,
+        visible_to_student: true,
         created_at: new Date().toISOString(),
       });
     }
 
     // Record in Audit Log
-    db.logAudit({
+    await db.logAudit({
       actor_id: session.userId,
       actor_email: session.email,
-      action: `APPLICATION_DECISION_${action.toUpperCase()}`,
+      action: validOverride ? 'ADMIN_DECISION_OVERRIDE' : `APPLICATION_DECISION_${action.toUpperCase()}`,
       entity: 'applications',
       entity_id: id,
       meta: {
         previous_status: application.status,
-        new_status: newStatus,
-        remark,
+        new_status: targetStatus,
+        remark: effectiveRemark,
+        hard_copy_received,
+        is_override: validOverride,
       },
+      ip: clientIp,
     });
 
     // Send Notification to student
-    const student = db.findUserById(application.student_id);
-    const scholarship = db.findScholarshipByCode(application.data.scholarship_code || 'MNC');
+    const student = await db.findUserById(application.student_id);
+    const scholarship = await db.findScholarshipByCode(application.data.scholarship_code || 'MNC');
     if (student && notifType) {
       await sendNotification({
         toEmail: student.email,
@@ -146,7 +275,7 @@ export async function POST(
 
     return NextResponse.json({ success: true, application: updated });
   } catch (error: unknown) {
-    console.error('Decision update error:', error);
+    console.error('[Admin Decision] Failed to process decision:', error instanceof Error ? error.name : 'UnknownError');
     return NextResponse.json({ error: { message: 'Failed to process decision' } }, { status: 500 });
   }
 }
