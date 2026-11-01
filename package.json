@@ -10,7 +10,7 @@
     "test": "tsx --conditions=react-server tests/run-all-tests.ts"
   },
   "dependencies": {
-    "@hookform/resolvers": "^5.9.1",
+    "@hookform/resolvers": "^6.0.2",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.3",
     "@types/qrcode": "^1.5.6",
